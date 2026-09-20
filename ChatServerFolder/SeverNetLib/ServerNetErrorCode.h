@@ -13,5 +13,6 @@ namespace NServerNetLib
 
         ACCEPT_API_WSAEWOULDBLOCK,
         AACCEPT_API_ERROR,
+        ACCEPT_MAX_SESSION_COUNT
     };
 }

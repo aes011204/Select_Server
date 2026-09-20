@@ -84,7 +84,7 @@ namespace NServerNetLib
 
     bool TcpNetwork::Run()
     {
-        //한 번 검사하고 반환하는 함수
+        //한 번 검사하고 반환하는 함수 / 루프는 호스트 쪽에서 
 
         if (m_listenSocket == INVALID_SOCKET)
         {
@@ -94,17 +94,36 @@ namespace NServerNetLib
 
         // 매번 검사할 소켓 집합을 새로 구성 
         fd_set readSet;
-        FD_ZERO(&readSet);
-        FD_SET(m_listenSocket, &readSet);
+        fd_set writeSet;
+        FD_ZERO(&readSet); // 비우기
+        FD_ZERO(&writeSet); // 비우기
 
-        // 처리할 일이 없으면 최대 100ms 대기 
+        FD_SET(m_listenSocket, &readSet); //집합에 소켓 추가
+
+        // 새 연결 감시 (연결된 클라들)
+        bool hasPendingSend = false;
+
+        for (const auto& client : m_clients)
+        {
+            //모든 클라이언트의 수신과 종료를 감시
+            FD_SET(client.Socket, &readSet);
+
+            if (!client.SendBuffer.empty())
+            {
+                FD_SET(client.Socket, &writeSet);
+                hasPendingSend = true;
+            }
+        }
+
+
+        // 처리할 일이 없으면 최대 100ms 대기 (밖에서 루프 계속 돌면 빡세니까)
         timeval timeout{};
         timeout.tv_sec = 0;
         timeout.tv_usec = 100000;
         
-        const int result = select(0, &readSet, nullptr, nullptr, &timeout);
+        const int result = select(0, &readSet, hasPendingSend ? &writeSet : nullptr, nullptr, &timeout); //(Windows에서는 첫 번째 인자를 사용x,읽기 준비 상태를 검사할 소켓 집합,쓰기 준비 상태는 검사하지 않음,예외 상태는 검사하지 않음,처리할 일이 없을 때 기다릴 최대 시간)
 
-        if(result ==SOCKET_ERROR)
+        if(result == SOCKET_ERROR)
         {
             std::cerr << "select failed: " << WSAGetLastError() << "\n";
             return false;
@@ -116,6 +135,37 @@ namespace NServerNetLib
             return true;
         }
 
+        // 기존 크라이언트부터 처리 
+        size_t index = 0;
+
+        while (index < m_clients.size())
+        {
+            auto& client = m_clients[index];
+            bool keepConnection = true;
+
+            if (FD_ISSET(client.Socket, &readSet))
+            {
+                //받아 송신 버퍼에 넣고
+                keepConnection = ReceiveClient(client);
+            }
+
+            if (keepConnection && FD_ISSET(client.Socket, &writeSet))
+            {
+                //A에게 돌려보내는 것
+                keepConnection = SendClient(client);
+            }
+
+            if (!keepConnection)
+            {
+                CloseClient(index);
+                // 삭제로 다음 원소가 현재 위치로 이동했으므로 index를 증가시키지 않음
+                continue;
+            }
+            ++index;
+        }
+
+
+        // 새로 들어오고 싶어하는 애들 accept, 이번에 들어온 연결은 다음 Run()부터 수신·송신 감시
         if (FD_ISSET(m_listenSocket, &readSet))
         {
             AcceptClient();
@@ -128,12 +178,12 @@ namespace NServerNetLib
     void TcpNetwork::Release()
     {
         //1. 클라이언트 소켓 정리
-        for (SOCKET clientSoket : m_clientSockets)
+        for (const auto& client : m_clients)
         {
-            closesocket(clientSoket);
+            closesocket(client.Socket);
         }
 
-        m_clientSockets.clear();
+        m_clients.clear();
 
         //2. 리스닝 소켓정리 
 
@@ -154,6 +204,8 @@ namespace NServerNetLib
 
     NET_ERROR_CODE TcpNetwork::AcceptClient()
     {
+        //들어오고 싶어 대기 중인 연결 하나를 꺼내서, 프로그램이 그 상대와 통신할 수 있는 소켓을 반환하는 함수
+
         SOCKET clientSocket = accept(m_listenSocket, nullptr, nullptr);//(리스닝소켓, 상대주소를받을공간, 주소공간의크기)
 
         if (clientSocket == INVALID_SOCKET)
@@ -165,11 +217,19 @@ namespace NServerNetLib
             {
                 return NET_ERROR_CODE::ACCEPT_API_WSAEWOULDBLOCK;
             }
-
+            // 다른 오류
             std::cerr << "accept failed:" << errer << "\n";
             return NET_ERROR_CODE::AACCEPT_API_ERROR;
         }
         
+        if (m_clients.size() >= MAX_CLIENTS)
+        {
+            std::cout<< "Client limit reached.\n";
+            closesocket(clientSocket);
+            return NET_ERROR_CODE::ACCEPT_MAX_SESSION_COUNT;
+        }
+
+
         NET_ERROR_CODE err = SetNonBlockSocket(clientSocket);
         if (err != NET_ERROR_CODE::NONE)
         {
@@ -177,14 +237,120 @@ namespace NServerNetLib
             return err;
         }
 
-        m_clientSockets.push_back(clientSocket);
+        m_clients.push_back(ClientSession{ clientSocket,{} });
 
-        std::cout << "Client accepted. Socket: " << clientSocket << ", stored sockets: " << m_clientSockets.size() << "\n";
+        std::cout << "Client accepted. Socket: " << clientSocket << ", sessions: " << m_clients.size() << "\n";
+
+    }
+
+    bool TcpNetwork::ReceiveClient(ClientSession& client)
+    {
+        //특정 클라이언트가 보낸 데이터를 서버에서 받는 함수.
+
+        char buffer[4096];
+
+        const int received = recv(client.Socket, buffer, static_cast<int>(sizeof(buffer)), 0);//(데이터를 받을 연결,받은 바이트를 저장할 배열,이번에 받을 수 있는 최대 크기,특별한 옵션 없이 수신)
+
+        if (received > 0)
+        {
+            const auto receivedSize = static_cast<int>(sizeof(received));
+
+            if (client.SendBuffer.size() + receivedSize > MAX_SEND_BUFFER)
+            {
+                std::cerr << "Send buffer limit exceeded. Socket: "
+                    << client.Socket << '\n';
+                return false;
+            }
+
+            // 에코 : 받은 바이트를 같은 클라이언트에게 돌려보냄
+            client.SendBuffer.insert(client.SendBuffer.end(), buffer, buffer + received);
+
+            std::cout << "Received " << received << " bytes. Socket: " << client.Socket << '\n';
+
+            return true;
+        }
+
+        if (received == 0)
+        {
+            std::cout << "Peer finished sending. Socket: " << client.Socket << '\n';
+
+            return false;
+        }
+
+        const int error = WSAGetLastError();
+
+        if (error == WSAEWOULDBLOCK)
+        {
+            return true;
+        }
+
+        std::cerr << "recv failed: " << error << ", socket: " << client.Socket << '\n';
+
+        return true;
+    }
+
+    bool TcpNetwork::SendClient(ClientSession& client)
+    {
+        //준비된 데이터를 클라이언트에게 보냄
+
+        if (client.SendBuffer.empty())
+        {
+            return true;
+        }
+
+        const int sent = send(client.Socket, client.SendBuffer.data(), static_cast<int>(client.SendBuffer.size()),0);
+
+        if (sent > 0)
+        {
+            // 실제로 보낸 만큼만 제거
+            client.SendBuffer.erase(client.SendBuffer.begin(), client.SendBuffer.begin() + sent);
+
+            std::cout << "Sent " << sent << " bytes. Socket: " << client.Socket << "\n";
+
+            return true;
+        }
+
+        if (sent == SOCKET_ERROR)
+        {
+            const int error = WSAGetLastError();
+
+            if (error == WSAEWOULDBLOCK)
+            {
+                // 버퍼를 유지하고 다음 쓰기 가능시점에 재시도 
+
+                return true;
+            }
+
+            std::cerr << "send failed: " << error << ", socket: " << client.Socket << "\n";
+            
+            return false;
+        }
+
+        std::cerr << "send mase no progress. Socket: " << client.Socket << "\n";
+
+        return false;
+    }
+
+    void TcpNetwork::CloseClient(size_t index)
+    {
+        //전달한 소켓 하나만 닫는 함수
+
+        const SOCKET socket = m_clients[index].Socket;
+        closesocket(socket);
+
+        m_clients.erase(m_clients.begin() + index);
+
+        std::cout << "Client removed. Socket: "
+            << socket
+            << ", sessions: "
+            << m_clients.size()
+            << '\n';
 
     }
 
     NET_ERROR_CODE TcpNetwork::SetNonBlockSocket(const SOCKET sock)
     {
+        // ioctlsocket은 accept(), recv(), send()가 처리할 수 없을 때 기다리지 않고 반환하는 힘수
 
         u_long nonBlocking = 1; //FIONBIO는 블로킹 모드를 바꾸라는 명령, 값 1은 논블로킹을 의미
 
@@ -192,7 +358,7 @@ namespace NServerNetLib
         {
             std::cerr << "ioctlsocket failed: " << WSAGetLastError << "\n";
 
-            Release();
+            //closesocket() 밖에서 할거임
             return NET_ERROR_CODE::SERVER_SOCKET_FIONBIO_FAIL;
         }
 
