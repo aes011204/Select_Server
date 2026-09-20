@@ -138,9 +138,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="framework.h" />
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="LogicLib.cpp" />
   </ItemGroup>
   <ItemGroup>

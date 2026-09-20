@@ -138,7 +138,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="framework.h" />
+    <ClInclude Include="ServerNetErrorCode.h" />
     <ClInclude Include="TcpNetwork.h" />
   </ItemGroup>
   <ItemGroup>

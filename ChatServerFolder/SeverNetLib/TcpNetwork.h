@@ -1,22 +1,34 @@
-﻿#pragma once
+#pragma once
 
 #include <winsock2.h>
+#include <vector>
+#include "ServerNetErrorCode.h"
 
-class TcpNetwork
+namespace NServerNetLib
 {
-public:
-	TcpNetwork();
-	~TcpNetwork();
 
-	TcpNetwork(const TcpNetwork&) = delete;
-	TcpNetwork& operator= (const TcpNetwork&) = delete;
+	class TcpNetwork
+	{
+	public:
+		TcpNetwork();
+		~TcpNetwork();
+
+		TcpNetwork(const TcpNetwork&) = delete;
+		TcpNetwork& operator= (const TcpNetwork&) = delete;
 
 
-	bool Init(UINT16 port);
-	void Release();
+		NET_ERROR_CODE Init(UINT16 port);
+		bool Run();
+		void Release();
+	private:
+		NET_ERROR_CODE AcceptClient();
 
-private:
-	SOCKET m_listenSocket = INVALID_SOCKET;
-	bool m_winsockStarted = false;
-};
+		NET_ERROR_CODE SetNonBlockSocket(const SOCKET sock);
+	private:
+		SOCKET m_listenSocket = INVALID_SOCKET;
+		bool m_winsockStarted = false;
 
+		std::vector<SOCKET> m_clientSockets;
+	};
+
+}
