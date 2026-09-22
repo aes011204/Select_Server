@@ -1,6 +1,10 @@
 #include "TcpNetwork.h"
 #include <iostream>
 
+#include "../../Common/PacketUtils.h"
+#include "../../Common/PacketID.h"
+
+
 namespace NServerNetLib
 {
 
@@ -237,7 +241,7 @@ namespace NServerNetLib
             return err;
         }
 
-        m_clients.push_back(ClientSession{ clientSocket,{} });
+        m_clients.push_back(ClientSession{ clientSocket,{},{} });
 
         std::cout << "Client accepted. Socket: " << clientSocket << ", sessions: " << m_clients.size() << "\n";
 
@@ -245,7 +249,7 @@ namespace NServerNetLib
 
     bool TcpNetwork::ReceiveClient(ClientSession& client)
     {
-        //특정 클라이언트가 보낸 데이터를 서버에서 받는 함수.
+        //특정 클라이언트가 보낸 데이터를 서버(수신버퍼)에 쌓는 함수.
 
         char buffer[4096];
 
@@ -253,9 +257,10 @@ namespace NServerNetLib
 
         if (received > 0)
         {
-            const auto receivedSize = static_cast<int>(sizeof(received));
+            //실제로 받은 데이터의 양 
+            const auto receivedSize = static_cast<size_t>(received);
 
-            if (client.SendBuffer.size() + receivedSize > MAX_SEND_BUFFER)
+            if (client.RecvBuffer.size() + receivedSize > MAX_SEND_BUFFER)
             {
                 std::cerr << "Send buffer limit exceeded. Socket: "
                     << client.Socket << '\n';
@@ -263,11 +268,12 @@ namespace NServerNetLib
             }
 
             // 에코 : 받은 바이트를 같은 클라이언트에게 돌려보냄
-            client.SendBuffer.insert(client.SendBuffer.end(), buffer, buffer + received);
+            // 일반적 : 데이터를 수신 버퍼에 모아서 패킷을 완성해야 함
+            client.RecvBuffer.insert(client.RecvBuffer.end(), buffer, buffer + received);
 
             std::cout << "Received " << received << " bytes. Socket: " << client.Socket << '\n';
 
-            return true;
+            return ProcessRecvBuffer(client);
         }
 
         if (received == 0)
@@ -329,6 +335,116 @@ namespace NServerNetLib
         std::cerr << "send mase no progress. Socket: " << client.Socket << "\n";
 
         return false;
+    }
+
+    bool TcpNetwork::ProcessRecvBuffer(ClientSession& client)
+    {
+        size_t readPos = 0;
+
+        while (true)
+        {
+            const size_t available = client.RecvBuffer.size() - readPos;
+
+            //1. 헤더조차 완성 되지 않았으면 다음 수신을 기다림
+            if (available < Protocol::HEADER_SIZE)
+            {
+                break;
+            }
+
+            const char* packet = client.RecvBuffer.data() + readPos;
+
+            const UINT16 totalSize = Protocol::ReadUInt16(packet);
+
+            const UINT16 packetId = Protocol::ReadUInt16(packet + 2);
+
+            //2. 길이검증
+            if (totalSize < Protocol::HEADER_SIZE || totalSize > Protocol::MAX_PACKET_SIZE)
+            {
+                std::cerr << "Invalid packet size: " << totalSize << "\n";
+                return false;
+            }
+
+            //3. 본문까지 모두 도착했는지 확인 
+            if (available < totalSize)
+            {
+                break;
+            }
+
+            const size_t bodySize = totalSize - Protocol::HEADER_SIZE;
+
+            const char* body = packet + Protocol::HEADER_SIZE;
+
+            //4.완성된 패킷 하나 처리
+            if (!HandlePacket(client, packetId, body, bodySize))
+                return false;
+
+            //5.다음 패킷의 시작위치로 이동 
+            readPos += totalSize;
+        }
+
+        //처리한 부분만 제거하고 불완전한 부분은 보관
+        if (readPos > 0)
+        {
+            client.RecvBuffer.erase(client.RecvBuffer.begin(), client.RecvBuffer.begin() + readPos);
+        }
+
+
+        return true;
+    }
+
+    bool TcpNetwork::HandlePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodySize)
+    {
+
+        std::cout << "Packet received. ID: " << packetId << ", body bytes: "<< bodySize << '\n';
+
+        switch (packetId)
+        {
+        case Protocol::ECHO_REQ:
+            return QueuePacket(client,Protocol::ECHO_RES,body,bodySize);
+        default:
+            std::cerr << "Unknown packet ID: " << packetId << "\n";
+            return false;
+        }
+
+
+
+        return false;
+    }
+
+    bool TcpNetwork::QueuePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodySize)
+    {
+        // 패킷 크기와 본문 포이터 확인
+        if (bodySize > 0 && body == nullptr)
+        {
+            return false;
+        }
+        const size_t totalSize = Protocol::HEADER_SIZE + bodySize;
+
+        if (client.SendBuffer.size() + totalSize > MAX_SEND_BUFFER)
+        {
+            std::cerr << "Send buffer limit exceeded.\n";
+            return false;
+        }
+
+        const size_t oldSize = client.SendBuffer.size();
+
+        client.SendBuffer.resize(oldSize + totalSize);
+
+        char* packet = client.SendBuffer.data() + oldSize;
+
+        //헤더기록
+        Protocol::WriteUInt16(packet, static_cast<UINT16>(totalSize));
+
+        Protocol::WriteUInt16(packet + 2, packetId);
+
+        //본문기록 '
+        if (bodySize > 0)
+        {
+            memcpy(packet + Protocol::HEADER_SIZE, body, bodySize);
+        }
+
+
+        return true;
     }
 
     void TcpNetwork::CloseClient(size_t index)

@@ -138,6 +138,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\Common\PacketID.h" />
+    <ClInclude Include="..\..\Common\PacketProtocol.h" />
+    <ClInclude Include="..\..\Common\PacketUtils.h" />
     <ClInclude Include="ServerNetErrorCode.h" />
     <ClInclude Include="TcpNetwork.h" />
   </ItemGroup>

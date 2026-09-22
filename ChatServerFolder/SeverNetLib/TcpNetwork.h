@@ -4,6 +4,8 @@
 #include <vector>
 #include "ServerNetErrorCode.h"
 
+#include "../../Common/PacketProtocol.h"
+
 namespace NServerNetLib
 {
 
@@ -11,6 +13,7 @@ namespace NServerNetLib
 	{
 		//클라이언트마다소켓 번호뿐 아니라 버퍼 같은 정보도 함께 관리하기 위해
 		SOCKET Socket = INVALID_SOCKET;
+		std::vector<char> RecvBuffer;
 		std::vector<char> SendBuffer;
 	};
 
@@ -29,13 +32,19 @@ namespace NServerNetLib
 		bool Run();
 		void Release();
 	private:
+		NET_ERROR_CODE SetNonBlockSocket(const SOCKET sock);
+
 		NET_ERROR_CODE AcceptClient();
 
 		bool ReceiveClient(ClientSession& client);
 		bool SendClient(ClientSession& client);
+
+		bool ProcessRecvBuffer(ClientSession& client);
+		bool HandlePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodysize);
+		bool QueuePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodysize);
+
 		void CloseClient(size_t index);
 
-		NET_ERROR_CODE SetNonBlockSocket(const SOCKET sock);
 	private:
 		SOCKET m_listenSocket = INVALID_SOCKET;
 		bool m_winsockStarted = false;
@@ -47,6 +56,8 @@ namespace NServerNetLib
 
 		// 클라이언트 별 송산 대기 데이터 상한 = 1mib
 		static constexpr size_t MAX_SEND_BUFFER = 1024 * 1024;
+
+		static constexpr size_t MAX_RECV_BUFFER = Protocol::MAX_PACKET_SIZE * 2;
 	};
 
 }
