@@ -1,6 +1,8 @@
 #include "TcpNetwork.h"
 #include <iostream>
-
+#include <limits>
+#include <utility>
+//#include <limits>
 #include "../../Common/PacketUtils.h"
 #include "../../Common/PacketID.h"
 
@@ -188,6 +190,7 @@ namespace NServerNetLib
         }
 
         m_clients.clear();
+        m_receivedPackets.clear();
 
         //2. 리스닝 소켓정리 
 
@@ -204,6 +207,59 @@ namespace NServerNetLib
             m_winsockStarted = false;
         }
 
+    }
+
+    bool TcpNetwork::TryPopPacket(ReceivedPacket& outPacket)
+    {
+
+        if (m_receivedPackets.empty())
+        {
+            return false;
+        }
+
+        outPacket = std::move(m_receivedPackets.front());
+
+        m_receivedPackets.pop_front();
+
+        return true;
+    }
+
+    bool TcpNetwork::IsConnected(SessionId sessionId) const
+    {
+        for (const auto& client : m_clients)
+        {
+            if (client.Id == sessionId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TcpNetwork::SendPacket(SessionId sessionId, UINT16 packetId, const char* body, size_t bodySize)
+    {
+        for (auto& client : m_clients)
+        {
+            if (client.Id == sessionId)
+            {
+                return QueuePacket(client, packetId, body, bodySize);
+            }
+        }
+
+        return false;
+    }
+
+    void TcpNetwork::Disconnect(SessionId sessionId)
+    {
+        for (size_t i = 0; i < m_clients.size(); ++i)
+        {
+            if (m_clients[i].Id == sessionId)
+            {
+                CloseClient(i);
+                return;
+            }
+        }
     }
 
     NET_ERROR_CODE TcpNetwork::AcceptClient()
@@ -233,6 +289,13 @@ namespace NServerNetLib
             return NET_ERROR_CODE::ACCEPT_MAX_SESSION_COUNT;
         }
 
+        //ID가 넘쳐서 예전값을 재사용하지 않도록 확인
+        if (m_lastSessionId == (std::numeric_limits<SessionId>::max)())
+        {
+            std::cerr << "Session ID exhausted.\n";
+            closesocket(clientSocket);
+            return NET_ERROR_CODE::SESSION_ID_EXHAUSTED;
+        }
 
         NET_ERROR_CODE err = SetNonBlockSocket(clientSocket);
         if (err != NET_ERROR_CODE::NONE)
@@ -241,10 +304,20 @@ namespace NServerNetLib
             return err;
         }
 
-        m_clients.push_back(ClientSession{ clientSocket,{},{} });
+        ClientSession client;
+        client.Id = ++m_lastSessionId;
+        client.Socket = clientSocket;
 
-        std::cout << "Client accepted. Socket: " << clientSocket << ", sessions: " << m_clients.size() << "\n";
+        const SessionId sessionId = client.Id;
 
+
+        m_clients.push_back(std::move(client));
+
+        std::cout << "Client accepted. Session: " << sessionId
+            << ", socket: " << clientSocket
+            << ", clients: " << m_clients.size() << '\n';
+
+        return NET_ERROR_CODE::NONE;
     }
 
     bool TcpNetwork::ReceiveClient(ClientSession& client)
@@ -292,7 +365,7 @@ namespace NServerNetLib
 
         std::cerr << "recv failed: " << error << ", socket: " << client.Socket << '\n';
 
-        return true;
+        return false;
     }
 
     bool TcpNetwork::SendClient(ClientSession& client)
@@ -375,7 +448,7 @@ namespace NServerNetLib
             const char* body = packet + Protocol::HEADER_SIZE;
 
             //4.완성된 패킷 하나 처리
-            if (!HandlePacket(client, packetId, body, bodySize))
+            if (!EnqueueReceivedPacket(client, packetId, body, bodySize))
                 return false;
 
             //5.다음 패킷의 시작위치로 이동 
@@ -392,23 +465,47 @@ namespace NServerNetLib
         return true;
     }
 
-    bool TcpNetwork::HandlePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodySize)
+    //bool TcpNetwork::HandlePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodySize)
+    //{
+
+    //    std::cout << "Packet received. ID: " << packetId << ", body bytes: "<< bodySize << '\n';
+
+    //    switch (packetId)
+    //    {
+    //    case Protocol::ECHO_REQ:
+    //        return QueuePacket(client,Protocol::ECHO_RES,body,bodySize);
+    //    default:
+    //        std::cerr << "Unknown packet ID: " << packetId << "\n";
+    //        return false;
+    //    }
+
+
+
+    //    return false;
+    //}
+
+    bool TcpNetwork::EnqueueReceivedPacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodysize)
     {
+        //완성된 수신 패킷을 처리 대기 큐에 넣는 함수
 
-        std::cout << "Packet received. ID: " << packetId << ", body bytes: "<< bodySize << '\n';
-
-        switch (packetId)
+        if (m_receivedPackets.size() >= MAX_PENDING_PACKETS)
         {
-        case Protocol::ECHO_REQ:
-            return QueuePacket(client,Protocol::ECHO_RES,body,bodySize);
-        default:
-            std::cerr << "Unknown packet ID: " << packetId << "\n";
+            std::cerr << "Received packet queue is full.\n";
             return false;
         }
 
+        ReceivedPacket packet;
+        packet.Session = client.Id;
+        packet.PacketId = packetId;
 
+        if (bodysize > 0)
+        {
+            packet.Body.assign(body, body + bodysize);
+        }
 
-        return false;
+        m_receivedPackets.push_back(std::move(packet));
+
+        return true;
     }
 
     bool TcpNetwork::QueuePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodySize)
@@ -450,14 +547,17 @@ namespace NServerNetLib
     void TcpNetwork::CloseClient(size_t index)
     {
         //전달한 소켓 하나만 닫는 함수
-
+        const SessionId sessionId = m_clients[index].Id;
         const SOCKET socket = m_clients[index].Socket;
+
         closesocket(socket);
 
         m_clients.erase(m_clients.begin() + index);
 
         std::cout << "Client removed. Socket: "
             << socket
+            <<"Session : "
+            << sessionId
             << ", sessions: "
             << m_clients.size()
             << '\n';
@@ -472,7 +572,7 @@ namespace NServerNetLib
 
         if (ioctlsocket(sock, FIONBIO, &nonBlocking) == SOCKET_ERROR)
         {
-            std::cerr << "ioctlsocket failed: " << WSAGetLastError << "\n";
+            std::cerr << "ioctlsocket failed: " << WSAGetLastError() << "\n";
 
             //closesocket() 밖에서 할거임
             return NET_ERROR_CODE::SERVER_SOCKET_FIONBIO_FAIL;

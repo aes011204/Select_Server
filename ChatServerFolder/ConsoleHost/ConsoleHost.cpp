@@ -1,4 +1,5 @@
 #include "../SeverNetLib/TcpNetwork.h"
+#include "../LogicLib/PacketProcessor.h"
 #include <conio.h>
 #include <iostream>
 
@@ -15,6 +16,8 @@ int main()
         std::cin.get();
         return 1;
     }
+
+    NLogicLib::PacketProcessor logic(network);
 
     std::cout << "Listening on 127.0.0.1:"
         << port << '\n';
@@ -34,13 +37,15 @@ int main()
                 break;
             }
         }
-        //네트워크 상태 확인 및 접속처리 
+        //접속·수신·송신·패킷 조립
         if (!network.Run())
         {
             std::cerr << "Network loop stopped by an errer. \n";
             exitCode = 1;
             break;
         }
+        // 조립된 패킷의 의미 처리
+        logic.Update();
     }
 
     network.Release();
