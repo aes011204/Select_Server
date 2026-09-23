@@ -556,9 +556,9 @@ namespace NServerNetLib
 
         std::cout << "Client removed. Socket: "
             << socket
-            <<"Session : "
+            <<", Session : "
             << sessionId
-            << ", sessions: "
+            << ", m_clients.size: "
             << m_clients.size()
             << '\n';
 
