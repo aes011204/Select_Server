@@ -7,117 +7,364 @@
 #include <iostream>
 #include <string>
 #include "../Common/PacketID.h"
+#include "../Common/PacketUtils.h"
 
 using namespace NChatClient;
 
-    int main()
-    {
-        TcpClient client;
 
-        if (!client.Connect("127.0.0.1", 32452))
-        {
-            std::cerr << "Connection failed.\n";
-            std::cout << "Press Enter to exit.\n";
-            std::cin.get();
+bool ProcessCommand(
+	TcpClient& client,
+	const std::string& command)
+{
+	if (command == "quit")
+	{
+		return false;
+	}
 
-            return 1;
-        }
+	if (command == "help")
+	{
+		std::cout << "login <nickname>\n";
+		std::cout << "echo <message>\n";
+		std::cout << "quit\n";
+		return true;
+	}
 
-        std::cout << "Connected to server.\n";
-        std::cout << "1: Send Hello\n";
-        std::cout << "2: Send two packets\n";
-        std::cout << "3: Send 3000-byte body\n";
-        std::cout << "Q: Quit\n";
+	if (command == "login" ||
+		command.rfind("login ", 0) == 0)
+	{
+		const std::string nickname =
+			command == "login"
+			? std::string{}
+		: command.substr(6);
 
-        while (true)
-        {
-            if (_kbhit())
-            {
-                const int key = _getch();
-                std::cout << "[KEY] " << key << '\n';
-                if (key == 'q' || key == 'Q')
-                {
-                    break;
-                }
+		if (!client.SendPacket(
+			Protocol::LOGIN_REQ,
+			nickname))
+		{
+			std::cerr << "Could not queue login request.\n";
+			return false;
+		}
 
-                bool queued = true;
+		return true;
+	}
 
-                switch (key)
-                {
-                case '1':
-                    queued = client.SendPacket(Protocol::ECHO_REQ, "Hello sever");
-                    break;
+	if (command == "echo" ||
+		command.rfind("echo ", 0) == 0)
+	{
+		const std::string message =
+			command == "echo"
+			? std::string{}
+		: command.substr(5);
 
-                case '2':
-                    queued = client.SendPacket(Protocol::ECHO_REQ, "First");
-                    if (queued)
-                    {
-                        queued = client.SendPacket(Protocol::ECHO_REQ, "Second");
-                    }
-                    break;
+		if (!client.SendPacket(
+			Protocol::ECHO_REQ,
+			message))
+		{
+			std::cerr << "Could not queue echo request.\n";
+			return false;
+		}
 
-                case '3':
-                    queued = client.SendPacket(Protocol::ECHO_REQ, std::string(3000,'A'));
-                    break;
+		return true;
+	}
 
-                default:
-                    break;
-                }
+	if (command == "chat" ||
+		command.rfind("chat ", 0) == 0)
+	{
+		const std::string message =
+			command == "chat"
+			? std::string{}
+		: command.substr(5);
 
-                if (!queued)
-                {
-                    std::cerr << "Could not queue request.\n";
-                    break;
-                }
-            }
-        
-            if (!client.Run())
-            {
-                break;
-            }
+		if (!client.SendPacket(
+			Protocol::CHAT_REQ,
+			message))
+		{
+			std::cerr << "Could not queue chat request.\n";
+			return false;
+		}
 
-            ClientPacket packet;
+		return true;
+	}
 
-            while (client.TryPopPacket(packet))
-            {
-                if (packet.PacketId != Protocol::ECHO_RES)
-                {
-                    std::cerr << "Unexpected packet ID: " << packet.PacketId << '\n';
-                    continue;
-                }
+	if (!command.empty())
+	{
+		std::cout << "Unknown command. Type help.\n";
+	}
 
-                const std::string text(packet.Body.begin(), packet.Body.end());
+	return true;
+}
 
-                std::cout << "[Echo] bytes: " << packet.Body.size() << ", text: ";
+bool ProcessChatNotification(const ClientPacket& packet)
+{
+	const auto& body = packet.Body;
 
-                if (text.size() <= 80)
-                {
-                    std::cout << text;
-                }
-                else
-                {
-                    std::cout << text.substr(0, 80) << "...";
-                }
+	// 닉네임 길이 1 + 메시지 길이 2는 최소한 필요
+	if (body.size() < 3)
+	{
+		std::cerr << "Chat notification is too short.\n";
+		return false;
+	}
 
-                std::cout << "\n";
-            }
-        
-        }
+	const std::size_t nicknameSize =
+		static_cast<unsigned char>(body[0]);
 
-        client.Disconnect();
+	if (nicknameSize == 0 ||
+		nicknameSize > Protocol::MAX_NICKNAME_BYTES)
+	{
+		std::cerr << "Invalid nickname length.\n";
+		return false;
+	}
 
-        std::cout << "Client stopped.\n";
+	// 닉네임과 메시지 길이 필드가 모두 있는지 검사
+	if (body.size() < 1 + nicknameSize + 2)
+	{
+		std::cerr << "Incomplete chat notification.\n";
+		return false;
+	}
 
-        return 0;
-    }
+	std::size_t pos = 1;
 
-    // 프로그램 실행: <Ctrl+F5> 또는 [디버그] > [디버깅하지 않고 시작] 메뉴
-    // 프로그램 디버그: <F5> 키 또는 [디버그] > [디버깅 시작] 메뉴
+	const std::string nickname(
+		body.data() + pos,
+		nicknameSize
+	);
 
-    // 시작을 위한 팁: 
-    //   1. [솔루션 탐색기] 창을 사용하여 파일을 추가/관리합니다.
-    //   2. [팀 탐색기] 창을 사용하여 소스 제어에 연결합니다.
-    //   3. [출력] 창을 사용하여 빌드 출력 및 기타 메시지를 확인합니다.
-    //   4. [오류 목록] 창을 사용하여 오류를 봅니다.
-    //   5. [프로젝트] > [새 항목 추가]로 이동하여 새 코드 파일을 만들거나, [프로젝트] > [기존 항목 추가]로 이동하여 기존 코드 파일을 프로젝트에 추가합니다.
-    //   6. 나중에 이 프로젝트를 다시 열려면 [파일] > [열기] > [프로젝트]로 이동하고 .sln 파일을 선택합니다.
+	pos += nicknameSize;
+
+	const std::size_t messageSize =
+		Protocol::ReadUInt16(body.data() + pos);
+
+	pos += 2;
+
+	if (messageSize == 0 ||
+		messageSize > Protocol::MAX_CHAT_MESSAGE_BYTES)
+	{
+		std::cerr << "Invalid message length.\n";
+		return false;
+	}
+
+	// 남은 본문 크기와 기록된 메시지 길이가 같아야 함
+	if (body.size() - pos != messageSize)
+	{
+		std::cerr << "Chat message length mismatch.\n";
+		return false;
+	}
+
+	const std::string message(
+		body.data() + pos,
+		messageSize
+	);
+
+	std::cout << "\n[Chat] "
+		<< nickname << ": "
+		<< message << '\n';
+
+	return true;
+}
+
+bool ProcessResponse(const ClientPacket& packet)
+{
+	switch (packet.PacketId)
+	{
+	case Protocol::LOGIN_RES:
+	{
+		if (packet.Body.size() != 1)
+		{
+			std::cerr << "Invalid login response size.\n";
+			return false;
+		}
+
+		const auto result =
+			static_cast<Protocol::LoginResult>(
+				static_cast<unsigned char>(packet.Body[0])
+				);
+
+		switch (result)
+		{
+		case Protocol::LoginResult::Success:
+			std::cout << "[Login] Success\n";
+			break;
+
+		case Protocol::LoginResult::InvalidNickname:
+			std::cout
+				<< "[Login] Use 1-16 letters, digits or underscore.\n";
+			break;
+
+		case Protocol::LoginResult::NicknameInUse:
+			std::cout << "[Login] Nickname is already in use.\n";
+			break;
+
+		case Protocol::LoginResult::AlreadyLoggedIn:
+			std::cout << "[Login] This connection is already logged in.\n";
+			break;
+
+		default:
+			std::cerr << "Unknown login result.\n";
+			return false;
+		}
+
+		return true;
+	}
+
+	case Protocol::ECHO_RES:
+	{
+		const std::string text(
+			packet.Body.begin(),
+			packet.Body.end()
+		);
+
+		std::cout << "[Echo] " << text << '\n';
+		return true;
+	}
+	case Protocol::CHAT_RES:
+	{
+		if (packet.Body.size() != 1)
+		{
+			std::cerr << "Invalid chat response size.\n";
+			return false;
+		}
+
+		const auto result =
+			static_cast<Protocol::ChatResult>(
+				static_cast<unsigned char>(packet.Body[0])
+				);
+
+		switch (result)
+		{
+		case Protocol::ChatResult::Success:
+			// 실제 채팅 내용은 CHAT_NTF에서 한 번만 출력
+			return true;
+
+		case Protocol::ChatResult::NotLoggedIn:
+			std::cout << "\n[Chat error] Login first.\n";
+			return true;
+
+		case Protocol::ChatResult::InvalidMessage:
+			std::cout
+				<< "\n[Chat error] Use 1-256 UTF-8 bytes, "
+				<< "with no control characters or only spaces.\n";
+			return true;
+
+		default:
+			std::cerr << "Unknown chat result.\n";
+			return false;
+		}
+	}
+
+	case Protocol::CHAT_NTF:
+		return ProcessChatNotification(packet);
+	default:
+		std::cerr << "Unexpected packet ID: "
+			<< packet.PacketId << '\n';
+
+		return false;
+	}
+}
+
+int main()
+{
+	TcpClient client;
+
+	if (!client.Connect("127.0.0.1", 32452))
+	{
+		std::cerr << "Connection failed.\n";
+		std::cout << "Press Enter to exit.\n";
+		std::cin.get();
+
+		return 1;
+	}
+
+	std::cout << "Connected to server.\n";
+	std::cout << "Commands: login <nickname>, echo <message>, quit\n";
+	std::cout << "> ";
+
+	bool running = true;
+	std::string input;
+
+
+	while (running)
+	{
+		if (_kbhit())
+		{
+			const int key = _getch();
+			// 방향키·기능키의 확장 입력은 무시
+			if (key == 0 || key == 224)
+			{
+				_getch();
+				continue;
+			}
+
+			if (key == '\r')
+			{
+				std::cout << '\n';
+
+				running = ProcessCommand(client, input);
+				input.clear();
+
+				if (!running)
+				{
+					break;
+				}
+
+				std::cout << "> ";
+			}
+			else if (key == '\b')
+			{
+				if (!input.empty())
+				{
+					input.pop_back();
+					std::cout << "\b \b";
+				}
+			}
+			else if (key >= 32 && key <= 126)
+			{
+				if (input.size() < 1024)
+				{
+					input.push_back(static_cast<char>(key));
+					std::cout << static_cast<char>(key);
+				}
+			}
+		}
+
+		if (!running)
+		{
+			break;
+		}
+
+		if (!client.Run())
+		{
+			break;
+		}
+
+		ClientPacket packet;
+
+		while (client.TryPopPacket(packet))
+		{
+			if (!ProcessResponse(packet))
+			{
+				running = false;
+				break;
+			}
+		}
+
+		
+
+	}
+
+	client.Disconnect();
+
+	std::cout << "Client stopped.\n";
+
+	return 0;
+}
+
+// 프로그램 실행: <Ctrl+F5> 또는 [디버그] > [디버깅하지 않고 시작] 메뉴
+// 프로그램 디버그: <F5> 키 또는 [디버그] > [디버깅 시작] 메뉴
+
+// 시작을 위한 팁: 
+//   1. [솔루션 탐색기] 창을 사용하여 파일을 추가/관리합니다.
+//   2. [팀 탐색기] 창을 사용하여 소스 제어에 연결합니다.
+//   3. [출력] 창을 사용하여 빌드 출력 및 기타 메시지를 확인합니다.
+//   4. [오류 목록] 창을 사용하여 오류를 봅니다.
+//   5. [프로젝트] > [새 항목 추가]로 이동하여 새 코드 파일을 만들거나, [프로젝트] > [기존 항목 추가]로 이동하여 기존 코드 파일을 프로젝트에 추가합니다.
+//   6. 나중에 이 프로젝트를 다시 열려면 [파일] > [열기] > [프로젝트]로 이동하고 .sln 파일을 선택합니다.

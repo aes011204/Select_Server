@@ -6,7 +6,8 @@
 #include "ServerNetErrorCode.h"
 
 #include "../../Common/PacketProtocol.h"
-#include "ReceivedPacket.h"
+//#include "ReceivedPacket.h"
+#include "NetworkEvent.h"
 
 using SessionId = UINT64;
 
@@ -38,7 +39,7 @@ namespace NServerNetLib
 		void Release();
 
 
-		bool TryPopPacket(ReceivedPacket& outPacket);
+		bool TryPopEvent(NetworkEvent& outEvent);
 		bool IsConnected(SessionId sessionId) const;
 		bool SendPacket(SessionId sessionId, UINT16 packetId, const char* body, size_t bodySize);
 		void Disconnect(SessionId sessionId);
@@ -58,12 +59,14 @@ namespace NServerNetLib
 
 		void CloseClient(size_t index);
 
+		void PushConnectionEvent(NetworkEventType type, SessionId sessionId);
+
 	private:
 		SOCKET m_listenSocket = INVALID_SOCKET;
 		bool m_winsockStarted = false;
 
 		std::vector<ClientSession> m_clients;
-		std::deque<ReceivedPacket> m_receivedPackets;
+		std::deque<NetworkEvent> m_events;
 
 		SessionId m_lastSessionId = 0; 
 

@@ -2,7 +2,6 @@
 #include <iostream>
 #include <limits>
 #include <utility>
-//#include <limits>
 #include "../../Common/PacketUtils.h"
 #include "../../Common/PacketID.h"
 
@@ -190,7 +189,7 @@ namespace NServerNetLib
         }
 
         m_clients.clear();
-        m_receivedPackets.clear();
+        m_events.clear();
 
         //2. 리스닝 소켓정리 
 
@@ -209,17 +208,17 @@ namespace NServerNetLib
 
     }
 
-    bool TcpNetwork::TryPopPacket(ReceivedPacket& outPacket)
+    bool TcpNetwork::TryPopEvent(NetworkEvent& outEvent)
     {
 
-        if (m_receivedPackets.empty())
+        if (m_events.empty())
         {
             return false;
         }
 
-        outPacket = std::move(m_receivedPackets.front());
+        outEvent = std::move(m_events.front());
 
-        m_receivedPackets.pop_front();
+        m_events.pop_front();
 
         return true;
     }
@@ -312,6 +311,8 @@ namespace NServerNetLib
 
 
         m_clients.push_back(std::move(client));
+
+        PushConnectionEvent(NetworkEventType::Connected, sessionId);
 
         std::cout << "Client accepted. Session: " << sessionId
             << ", socket: " << clientSocket
@@ -488,22 +489,23 @@ namespace NServerNetLib
     {
         //완성된 수신 패킷을 처리 대기 큐에 넣는 함수
 
-        if (m_receivedPackets.size() >= MAX_PENDING_PACKETS)
+        if (m_events.size() >= MAX_PENDING_PACKETS)
         {
-            std::cerr << "Received packet queue is full.\n";
+            std::cerr << "Received event queue is full.\n";
             return false;
         }
 
-        ReceivedPacket packet;
-        packet.Session = client.Id;
-        packet.PacketId = packetId;
+        NetworkEvent  event;
+        event.type = NetworkEventType::Packet;
+        event.Session = client.Id;
+        event.PacketId = packetId;
 
         if (bodysize > 0)
         {
-            packet.Body.assign(body, body + bodysize);
+            event.Body.assign(body, body + bodysize);
         }
 
-        m_receivedPackets.push_back(std::move(packet));
+        m_events.push_back(std::move(event));
 
         return true;
     }
@@ -554,6 +556,9 @@ namespace NServerNetLib
 
         m_clients.erase(m_clients.begin() + index);
 
+
+        PushConnectionEvent(NetworkEventType::Disconnected, sessionId);
+
         std::cout << "Client removed. Socket: "
             << socket
             <<", Session : "
@@ -561,6 +566,17 @@ namespace NServerNetLib
             << ", m_clients.size: "
             << m_clients.size()
             << '\n';
+
+    }
+
+    void TcpNetwork::PushConnectionEvent(NetworkEventType type, SessionId sessionId)
+    {
+        NetworkEvent event;
+        event.type = type;
+        event.Session = sessionId;
+
+        m_events.push_back(std::move(event));
+
 
     }
 
