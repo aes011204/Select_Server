@@ -6,7 +6,7 @@
 #include <iostream>
 
 NLogicLib::PacketProcessor::PacketProcessor(NServerNetLib::INetwork& network, std::chrono::seconds loginTimeout)
-	: m_network(network), m_loginTimeout(loginTimeout)
+	: m_network(network), m_loginTimeout(loginTimeout),m_rooms(m_users)
 {
 	if (m_loginTimeout.count() <= 0)
 	{
@@ -129,6 +129,15 @@ void NLogicLib::PacketProcessor::HandleDisconnected(SessionId sessionId)
 
 	if (user != nullptr)
 	{
+		// 방정리가 사용자제거보다 우선
+		const auto result = m_rooms.LeaveRoom(sessionId);
+
+		if (result != RoomResult::Success && result != RoomResult::NotInRoom)
+		{
+			std::cerr<< "[Room] Cleanup failed. Session: "<< sessionId<< ", result: "
+				<< static_cast<int>(result)<< '\n';
+		}
+
 		// Remove() 전에 출력해야 함
 		std::cout << "[Logic] Remove user: " << user->Nickname << '\n';
 	}

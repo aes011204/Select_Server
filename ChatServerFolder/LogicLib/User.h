@@ -3,8 +3,49 @@
 #include <string>
 #include "../SeverNetLib/NetworkEvent.h"
 
-struct User
+#include "RoomTypes.h"
+
+namespace NLogicLib
 {
-	NServerNetLib::SessionId Session = 0;
-	std::string Nickname;
-};
+	class RoomManager;
+
+	class User
+	{
+	public:
+
+		NServerNetLib::SessionId Session = 0;
+		std::string Nickname;
+
+		UserState GetState() const
+		{
+			return m_state;
+		}
+
+		RoomId GetRoomId() const
+		{
+			return m_roomId;
+		}
+
+	private:
+
+		friend class RoomManager;
+
+		void EnterRoom(RoomId roomId)
+		{
+			m_roomId = roomId;
+			m_state = UserState::InRoom;
+		}
+
+		void ReturnToLobby()
+		{
+			m_roomId = INVALID_ROOM_ID;
+			m_state = UserState::Lobby;
+		}
+
+	private:
+		UserState m_state = UserState::Lobby;
+
+		RoomId m_roomId = INVALID_ROOM_ID;
+
+	};
+}

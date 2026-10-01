@@ -3,6 +3,7 @@
 #include "FakeNetwork.h"
 
 #include "../ChatServerFolder/LogicLib/PacketProcessor.h"
+#include "../ChatServerFolder/LogicLib/RoomManager.h"
 #include "../Common/PacketID.h"
 #include "../Common/PacketCode.h"
 
@@ -352,7 +353,108 @@ bool RunTest(const char* name, void (*test)())
         return false;
     }
 }
+void TestRoomLifecycle()
+{
+    NLogicLib::UserManager users;
 
+    NLogicLib::RoomConfig config;
+    config.MaxRooms = 1;
+    config.Capacity = 2;
+
+    NLogicLib::RoomManager rooms(users, config);
+
+    Check(
+        users.Login(1, "Kim") == Protocol::LoginResult::Success,
+        "Kim login failed");
+
+    Check(
+        users.Login(2, "Lee") == Protocol::LoginResult::Success,
+        "Lee login failed");
+
+    const NLogicLib::User* kim = users.Find(1);
+
+    Check(kim != nullptr, "Kim should exist");
+
+    Check(
+        kim->GetState() == NLogicLib::UserState::Lobby,
+        "New user should be in lobby");
+
+    Check(
+        kim->GetRoomId() == NLogicLib::INVALID_ROOM_ID,
+        "Lobby user should have no room");
+
+    NLogicLib::RoomId roomId = NLogicLib::INVALID_ROOM_ID;
+
+    const auto created =
+        rooms.CreateRoom(1, "First Room", roomId);
+
+    Check(
+        created == NLogicLib::RoomResult::Success,
+        "Room creation should succeed");
+
+    const NLogicLib::Room* room = rooms.Find(roomId);
+
+    Check(room != nullptr, "Created room should exist");
+
+    Check(
+        room->Contains(1),
+        "Creator should be a room member");
+
+    Check(
+        kim->GetState() == NLogicLib::UserState::InRoom,
+        "Creator should be in room");
+
+    Check(
+        kim->GetRoomId() == roomId,
+        "User room ID should match");
+
+    NLogicLib::RoomId anotherId = 0;
+
+    Check(
+        rooms.CreateRoom(1, "Another Room", anotherId) ==
+        NLogicLib::RoomResult::AlreadyInRoom,
+        "User already in room should not create another");
+
+    Check(
+        rooms.CreateRoom(2, "Lee Room", anotherId) ==
+        NLogicLib::RoomResult::RoomLimitReached,
+        "Room count limit should be enforced");
+
+    Check(
+        users.Find(2)->GetState() == NLogicLib::UserState::Lobby,
+        "Failed creation must not change user state");
+
+    Check(
+        rooms.LeaveRoom(1) == NLogicLib::RoomResult::Success,
+        "Leaving room should succeed");
+
+    Check(
+        kim->GetState() == NLogicLib::UserState::Lobby,
+        "User should return to lobby");
+
+    Check(
+        kim->GetRoomId() == NLogicLib::INVALID_ROOM_ID,
+        "Room ID should be cleared");
+
+    Check(
+        rooms.Find(roomId) == nullptr,
+        "Empty room should be deleted");
+
+    Check(
+        rooms.GetRoomCount() == 0,
+        "Room count should return to zero");
+
+    // room 포인터는 방 삭제 이후 다시 사용하지 않는다.
+
+    Check(
+        rooms.CreateRoom(2, "Lee Room", anotherId) ==
+        NLogicLib::RoomResult::Success,
+        "Room creation should succeed after capacity is freed");
+
+    Check(
+        anotherId != roomId,
+        "New room should receive a new ID");
+}
 int main()
 {
     int failed = 0;
@@ -377,6 +479,11 @@ int main()
 
     if (!RunTest("Late login", TestLateLoginRejected))
         ++failed;
+
+    // 방 관련
+    if (!RunTest("Room lifecycle", TestRoomLifecycle))
+        ++failed;
+
 
     std::cout
         << "Failed tests: "

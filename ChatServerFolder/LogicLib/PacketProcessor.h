@@ -6,7 +6,7 @@
 #include <array>
 #include <chrono>
 #include <unordered_map>
-
+#include "RoomManager.h"
 
 namespace NLogicLib
 {
@@ -66,8 +66,8 @@ namespace NLogicLib
 
 
 		NServerNetLib::INetwork& m_network;
-		UserManager m_users;
-
+		UserManager m_users; 
+		RoomManager m_rooms;// 여기서 유저를 참조함 
 
 		// 로그인 대기 시간 
 		std::chrono::seconds m_loginTimeout;
