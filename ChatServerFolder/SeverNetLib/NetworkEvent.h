@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <Windows.h>
+#include <chrono>
 
 namespace NServerNetLib
 {
@@ -25,6 +26,9 @@ namespace NServerNetLib
 		std::vector<char> Body;
 		// 수신 버퍼를 가리키는 포인터가 아니라
 		// 이 패킷 객체가 소유하는 데이터
+
+		std::chrono::steady_clock::time_point OccurredAt =
+			std::chrono::steady_clock::now();
 	};
 
 }

@@ -18,10 +18,31 @@ namespace NServerNetLib
         Release();
     }
 
-    NET_ERROR_CODE TcpNetwork::Init(UINT16 port)
+    NET_ERROR_CODE TcpNetwork::Init(const NetworkConfig& config)
     {
         // 이미 초기화된 상태에서 다시 호출되어도 먼저 정리
         Release();
+
+        const auto maxSendSize =
+            static_cast<std::size_t>(
+                (std::numeric_limits<int>::max)());
+
+        if (config.Port == 0 ||
+            config.MaxClients == 0 ||
+            config.MaxClients > FD_SETSIZE - 1 ||
+            config.MaxAcceptsPerRun == 0 ||
+            config.MaxRecvBufferBytes < Protocol::MAX_PACKET_SIZE + 4096 ||
+            config.MaxSendBufferBytes < Protocol::MAX_PACKET_SIZE ||
+            config.MaxSendBufferBytes > maxSendSize ||
+            config.MaxQueuedEvents < config.MaxClients * 2 ||
+            config.SelectTimeout.count() <= 0 ||
+            config.SelectTimeout > std::chrono::seconds{ 1 })
+        {
+            std::cerr << "Invalid network configuration.\n";
+            return NET_ERROR_CODE::INVALID_CONFIG;
+        }
+
+        m_config = config;
 
         //1. winsock 초기화
         WSADATA wasData{};
@@ -59,7 +80,7 @@ namespace NServerNetLib
         // 3. 서버 주소 구성 
         sockaddr_in serverAddress{};
         serverAddress.sin_family = AF_INET; //IPv4 주소 사용
-        serverAddress.sin_port = htons(port); // 16비트 값: 포트 번호
+        serverAddress.sin_port = htons(m_config.Port); // 16비트 값: 포트 번호
         serverAddress.sin_addr.s_addr = htonl(INADDR_LOOPBACK); //32비트 값: 여기서는 IPv4 주소(INADDR_LOOPBACK = 127.0.0.1 = 나 자신)
 
         //4. 소켓에 주소와 포트 연결 
@@ -122,9 +143,11 @@ namespace NServerNetLib
 
 
         // 처리할 일이 없으면 최대 100ms 대기 (밖에서 루프 계속 돌면 빡세니까)
+        const auto timeoutMs = m_config.SelectTimeout.count();//// timeoutMs에는 숫자 10이 들어감
+
         timeval timeout{};
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100000;
+        timeout.tv_sec = static_cast<long>(timeoutMs / 1000); //0 : 초 부분
+        timeout.tv_usec = static_cast<long>((timeoutMs % 1000) * 1000); //0.01 : 나머지 
         
         const int result = select(0, &readSet, hasPendingSend ? &writeSet : nullptr, nullptr, &timeout); //(Windows에서는 첫 번째 인자를 사용x,읽기 준비 상태를 검사할 소켓 집합,쓰기 준비 상태는 검사하지 않음,예외 상태는 검사하지 않음,처리할 일이 없을 때 기다릴 최대 시간)
 
@@ -173,7 +196,26 @@ namespace NServerNetLib
         // 새로 들어오고 싶어하는 애들 accept, 이번에 들어온 연결은 다음 Run()부터 수신·송신 감시
         if (FD_ISSET(m_listenSocket, &readSet))
         {
-            AcceptClient();
+            //접속 요청이 한꺼번에 몰렸을 때 여러 개를 받아주되, 접속 처리만 하느라 기존 사용자 처리가 밀리지 않게
+            for (size_t attempt = 0; attempt < m_config.MaxAcceptsPerRun;attempt++)
+            {
+                const auto result = AcceptClient();
+
+                if (result == NET_ERROR_CODE::NONE)
+                    continue;
+
+                if (result == NET_ERROR_CODE::ACCEPT_API_WSAEWOULDBLOCK)// 현재 더 받을 연결이 없다.
+                    break;
+
+                // 이번 accept로 받은 소켓은 이미 닫았다. // 남은 시도 횟수 안에서 다음 연결도 처리한다.
+                if (result == NET_ERROR_CODE::ACCEPT_MAX_SESSION_COUNT || result == NET_ERROR_CODE::ACCEPT_EVENT_QUEUE_FULL)
+                    continue;
+
+                std::cerr << "Accept processing stopped. Code: "<< static_cast<int>(result)<< '\n';
+
+                break;
+            }
+
         }
 
         return true;
@@ -281,12 +323,26 @@ namespace NServerNetLib
             return NET_ERROR_CODE::AACCEPT_API_ERROR;
         }
         
-        if (m_clients.size() >= MAX_CLIENTS)
+        if (m_clients.size() >= m_config.MaxClients)
         {
             std::cout<< "Client limit reached.\n";
             closesocket(clientSocket);
             return NET_ERROR_CODE::ACCEPT_MAX_SESSION_COUNT;
         }
+
+
+        // 현재 연결마다 미래의 Disconnected 이벤트 한 칸을 남겨둔다.
+        // 새 연결은 Connected 한 칸 + 미래 Disconnected 한 칸이 필요하다.
+        if (m_events.size() + m_clients.size() + 2 > m_config.MaxQueuedEvents)
+        {
+            std::cerr << "Not enough event capacity for a new client.\n";
+
+            closesocket(clientSocket);
+            return NET_ERROR_CODE::ACCEPT_EVENT_QUEUE_FULL;
+        }
+
+
+
 
         //ID가 넘쳐서 예전값을 재사용하지 않도록 확인
         if (m_lastSessionId == (std::numeric_limits<SessionId>::max)())
@@ -334,7 +390,8 @@ namespace NServerNetLib
             //실제로 받은 데이터의 양 
             const auto receivedSize = static_cast<size_t>(received);
 
-            if (client.RecvBuffer.size() + receivedSize > MAX_SEND_BUFFER)
+            if (client.RecvBuffer.size() > m_config.MaxRecvBufferBytes || 
+                receivedSize > m_config.MaxRecvBufferBytes - client.RecvBuffer.size())
             {
                 std::cerr << "Send buffer limit exceeded. Socket: "
                     << client.Socket << '\n';
@@ -489,7 +546,7 @@ namespace NServerNetLib
     {
         //완성된 수신 패킷을 처리 대기 큐에 넣는 함수
 
-        if (m_events.size() >= MAX_PENDING_PACKETS)
+        if (m_events.size() + m_clients.size() >= m_config.MaxQueuedEvents)
         {
             std::cerr << "Received event queue is full.\n";
             return false;
@@ -513,13 +570,20 @@ namespace NServerNetLib
     bool TcpNetwork::QueuePacket(ClientSession& client, UINT16 packetId, const char* body, size_t bodySize)
     {
         // 패킷 크기와 본문 포이터 확인
+        if (bodySize >
+            Protocol::MAX_PACKET_SIZE - Protocol::HEADER_SIZE)
+        {
+            return false;
+        }
+
         if (bodySize > 0 && body == nullptr)
         {
             return false;
         }
         const size_t totalSize = Protocol::HEADER_SIZE + bodySize;
 
-        if (client.SendBuffer.size() + totalSize > MAX_SEND_BUFFER)
+        if (client.SendBuffer.size() > m_config.MaxSendBufferBytes ||
+            totalSize > m_config.MaxSendBufferBytes - client.SendBuffer.size())
         {
             std::cerr << "Send buffer limit exceeded.\n";
             return false;

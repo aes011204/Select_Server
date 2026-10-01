@@ -1,21 +1,28 @@
 #pragma once
 #include "../SeverNetLib/NetworkEvent.h"
 #include "UserManager.h"
+#include "../SeverNetLib/INetwork.h"
+#include <functional>
+#include <array>
+#include <chrono>
+#include <unordered_map>
 
-namespace NServerNetLib
-{
-	class TcpNetwork;
-}
 
 namespace NLogicLib
 {
-
+	using SessionId = NServerNetLib::SessionId;
 
 	class PacketProcessor
 	{
 	public:
-		PacketProcessor(NServerNetLib::TcpNetwork& network);
-
+		PacketProcessor(NServerNetLib::INetwork& network, std::chrono::seconds loginTimeout =
+			std::chrono::seconds{ 10 });
+		//람다가 [this]로 현재 객체의 주소를 기억하기 때문 그 객체를 복사하거나 이동하면, 복사된 람다가 여전히 원래 객체를 가리킬 수 있음
+		PacketProcessor(const PacketProcessor&) = delete;
+		PacketProcessor& operator=(const PacketProcessor&) = delete;
+		PacketProcessor(PacketProcessor&&) = delete;
+		PacketProcessor& operator=(PacketProcessor&&) = delete;
+	public:
 		void Update();
 	private:
 		//void Process(const ReceivedPacket& packet);
@@ -29,11 +36,43 @@ namespace NLogicLib
 
 		bool IsValidChatMessage(const std::string& message) const;
 	private:
+		using PacketHandler =
+			std::function<void(
+				const NServerNetLib::NetworkEvent&)>;
 
-		NServerNetLib::TcpNetwork& m_network;
+		static constexpr std::size_t HANDLER_COUNT = 256;
+
+		void RegisterHandlers();
+
+		void RegisterHandler(UINT16 packetId,PacketHandler handler);
+
+		//void ProcessPacket(const NServerNetLib::NetworkEvent& event);
+
+		void HandleEcho(const NServerNetLib::NetworkEvent& event);
+
+
+
+		// 로그인 대기 시간 
+		using Clock = std::chrono::steady_clock;
+
+		void HandleConnected(const NServerNetLib::NetworkEvent& event);
+
+		bool IsLoginExpired(SessionId sessionId) const;
+
+		void CheckLoginTimeouts();
+
+	private:
+		std::array<PacketHandler, HANDLER_COUNT> m_handlers{};
+
+
+		NServerNetLib::INetwork& m_network;
 		UserManager m_users;
 
 
+		// 로그인 대기 시간 
+		std::chrono::seconds m_loginTimeout;
+
+		std::unordered_map<SessionId, Clock::time_point> m_loginDeadlines;
 	};
 
 }

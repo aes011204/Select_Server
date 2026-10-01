@@ -5,7 +5,7 @@ Protocol::LoginResult NLogicLib::UserManager::Login(NServerNetLib::SessionId ses
     // 같은 연결에서 두번 로그인 하는지 확인 
     if (m_users.find(sessionId) != m_users.end())
     {
-        return Protocol::LoginResult::InvalidNickname;
+        return Protocol::LoginResult::AlreadyLoggedIn;
     }
 
     if (!IsValidNickname(nickname))

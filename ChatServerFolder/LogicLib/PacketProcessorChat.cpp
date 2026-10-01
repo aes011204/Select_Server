@@ -1,9 +1,8 @@
 
-#include "../SeverNetLib/TcpNetwork.h"
+#include "PacketProcessor.h"
 #include "../Common/PacketID.h"
 #include "../Common/PacketUtils.h"
-#include "PacketProcessor.h"
-
+#include "../../Common/PacketCode.h"
 #include <Windows.h>
 
 #include <cstring>
@@ -24,49 +23,35 @@ void NLogicLib::PacketProcessor::HandleChat(const NServerNetLib::NetworkEvent& e
 	}
 
 	// 발신자의 이름은 서버의 사용자 정보에서 가져옴
-	const std::string nickname = sender->Nickname;
+	Protocol::ChatRequest request;
 
-	const std::string message(event.Body.begin(), event.Body.end());
-
+	if (false == Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
 	//2. 메시지 검사
-	if (!IsValidChatMessage(message))
+	if (!IsValidChatMessage(request.Message))
 	{
 		SendChatResult(event.Session, Protocol::ChatResult::InvalidMessage);
 		return;
 	}
 	//3. 채팅 알림 본문 구성
 	// [닉네임 길이 1][닉네임][메시지 길이 2][메시지]
-	const std::size_t bodySize = 1 + nickname.size() + 2 + message.size();
 
-	std::vector<char> notification(bodySize);
+	Protocol::ChatNotification notification;
+	notification.Nickname = sender->Nickname;
+	notification.Message = request.Message;
 
-	std::size_t pos = 0;
+	Protocol::PacketBody body;
 
-	notification[pos++] =
-		static_cast<char>(nickname.size());
+	if (!Protocol::Encode(notification, body))
+	{
+		std::cerr << "Could not encode chat notification.\n";
+		m_network.Disconnect(event.Session);
 
-	std::memcpy(
-		notification.data() + pos,
-		nickname.data(),
-		nickname.size()
-	);
-
-	pos += nickname.size();
-
-	Protocol::WriteUInt16(
-		notification.data() + pos,
-		static_cast<std::uint16_t>(message.size())
-	);
-
-	pos += 2;
-
-	std::memcpy(
-		notification.data() + pos,
-		message.data(),
-		message.size()
-	);
-
-
+		return;
+	}
 
 	//4. 요청자에게 요청 수락 결과 전달
 	if (!SendChatResult(event.Session, Protocol::ChatResult::Success))
@@ -82,7 +67,7 @@ void NLogicLib::PacketProcessor::HandleChat(const NServerNetLib::NetworkEvent& e
 		if (!m_network.IsConnected(target))
 			continue;
 
-		const bool queued = m_network.SendPacket(target, Protocol::CHAT_NTF, notification.data(), notification.size());
+		const bool queued = m_network.SendPacket(target, Protocol::CHAT_NTF, body.data(), body.size());
 	
 		if (!queued)
 		{
@@ -94,9 +79,9 @@ void NLogicLib::PacketProcessor::HandleChat(const NServerNetLib::NetworkEvent& e
 
 
 
-	std::cout << "[Chat] " << nickname
+	std::cout << "[Chat] " << notification.Nickname
 		<< ", message bytes: "
-		<< message.size()
+		<< body.size()
 		<< '\n';
 }
 
@@ -104,9 +89,12 @@ bool NLogicLib::PacketProcessor::SendChatResult(SessionId sessionId, Protocol::C
 {
 	//채팅 요청을 보낸 사람에게 ‘처리 결과’를 보내는 함수
 
-	const char body = static_cast<char>(result);
+	Protocol::ChatResponse response;
+	response.Result = result;
 
-	const bool queued = m_network.SendPacket(sessionId, Protocol::CHAT_RES, &body, 1);
+	const auto body = Protocol::Encode(response);
+
+	const bool queued = m_network.SendPacket(sessionId, Protocol::CHAT_RES, body.data(),body.size());
 
 	if (!queued)
 		m_network.Disconnect(sessionId);

@@ -6,11 +6,17 @@
 #include <iostream>
 #include <iostream>
 #include <string>
+#include <stdexcept>
 #include "../Common/PacketID.h"
 #include "../Common/PacketUtils.h"
-
+#include "../Common/PacketCode.h"
 using namespace NChatClient;
+bool SendEncodedBody(NChatClient::TcpClient& client,UINT16 packetId,const Protocol::PacketBody& body)
+{
+	const std::string bytes(body.begin(), body.end());
 
+	return client.SendPacket(packetId, bytes);
+}
 
 bool ProcessCommand(
 	TcpClient& client,
@@ -37,9 +43,12 @@ bool ProcessCommand(
 			? std::string{}
 		: command.substr(6);
 
-		if (!client.SendPacket(
-			Protocol::LOGIN_REQ,
-			nickname))
+		Protocol::LoginRequest request;
+		request.Nickname = nickname;
+
+		const auto body = Protocol::Encode(request);
+
+		if (!SendEncodedBody(client, Protocol::LOGIN_REQ, body))
 		{
 			std::cerr << "Could not queue login request.\n";
 			return false;
@@ -75,9 +84,12 @@ bool ProcessCommand(
 			? std::string{}
 		: command.substr(5);
 
-		if (!client.SendPacket(
-			Protocol::CHAT_REQ,
-			message))
+		Protocol::ChatRequest request;
+		request.Message = message;
+
+		const auto body = Protocol::Encode(request);
+
+		if (!SendEncodedBody(client, Protocol::CHAT_REQ, body))
 		{
 			std::cerr << "Could not queue chat request.\n";
 			return false;
@@ -96,68 +108,20 @@ bool ProcessCommand(
 
 bool ProcessChatNotification(const ClientPacket& packet)
 {
-	const auto& body = packet.Body;
+	Protocol::ChatNotification notification;
 
-	// 닉네임 길이 1 + 메시지 길이 2는 최소한 필요
-	if (body.size() < 3)
+	if (!Protocol::Decode(packet.Body, notification))
 	{
-		std::cerr << "Chat notification is too short.\n";
+		std::cerr << "Invalid chat notification.\n";
 		return false;
 	}
 
-	const std::size_t nicknameSize =
-		static_cast<unsigned char>(body[0]);
-
-	if (nicknameSize == 0 ||
-		nicknameSize > Protocol::MAX_NICKNAME_BYTES)
-	{
-		std::cerr << "Invalid nickname length.\n";
-		return false;
-	}
-
-	// 닉네임과 메시지 길이 필드가 모두 있는지 검사
-	if (body.size() < 1 + nicknameSize + 2)
-	{
-		std::cerr << "Incomplete chat notification.\n";
-		return false;
-	}
-
-	std::size_t pos = 1;
-
-	const std::string nickname(
-		body.data() + pos,
-		nicknameSize
-	);
-
-	pos += nicknameSize;
-
-	const std::size_t messageSize =
-		Protocol::ReadUInt16(body.data() + pos);
-
-	pos += 2;
-
-	if (messageSize == 0 ||
-		messageSize > Protocol::MAX_CHAT_MESSAGE_BYTES)
-	{
-		std::cerr << "Invalid message length.\n";
-		return false;
-	}
-
-	// 남은 본문 크기와 기록된 메시지 길이가 같아야 함
-	if (body.size() - pos != messageSize)
-	{
-		std::cerr << "Chat message length mismatch.\n";
-		return false;
-	}
-
-	const std::string message(
-		body.data() + pos,
-		messageSize
-	);
-
-	std::cout << "\n[Chat] "
-		<< nickname << ": "
-		<< message << '\n';
+	std::cout
+		<< "\n[Chat] "
+		<< notification.Nickname
+		<< ": "
+		<< notification.Message
+		<< '\n';
 
 	return true;
 }
@@ -168,16 +132,17 @@ bool ProcessResponse(const ClientPacket& packet)
 	{
 	case Protocol::LOGIN_RES:
 	{
-		if (packet.Body.size() != 1)
+		Protocol::LoginResponse response;
+
+		if (!Protocol::Decode(packet.Body, response))
 		{
-			std::cerr << "Invalid login response size.\n";
+			std::cerr << "Invalid login response.\n";
 			return false;
 		}
 
-		const auto result =
-			static_cast<Protocol::LoginResult>(
-				static_cast<unsigned char>(packet.Body[0])
-				);
+		const auto result = response.Result;
+
+		// 이 아래의 기존 switch (result)는 그대로 유지
 
 		switch (result)
 		{
@@ -218,16 +183,15 @@ bool ProcessResponse(const ClientPacket& packet)
 	}
 	case Protocol::CHAT_RES:
 	{
-		if (packet.Body.size() != 1)
+		Protocol::ChatResponse response;
+
+		if (!Protocol::Decode(packet.Body, response))
 		{
-			std::cerr << "Invalid chat response size.\n";
+			std::cerr << "Invalid chat response.\n";
 			return false;
 		}
 
-		const auto result =
-			static_cast<Protocol::ChatResult>(
-				static_cast<unsigned char>(packet.Body[0])
-				);
+		const auto result = response.Result;
 
 		switch (result)
 		{
@@ -261,8 +225,68 @@ bool ProcessResponse(const ClientPacket& packet)
 	}
 }
 
+void CheckPacketCodec()
+{
+	Protocol::ChatNotification original;
+	original.Nickname = "Kim";
+	original.Message = "Hi";
+
+	Protocol::PacketBody encoded;
+
+	if (!Protocol::Encode(original, encoded))
+	{
+		throw std::runtime_error("Encode failed");
+	}
+
+	const Protocol::PacketBody expected{
+		3, 'K', 'i', 'm',
+		0, 2, 'H', 'i'
+	};
+
+	if (encoded != expected)
+	{
+		throw std::runtime_error("Wire format mismatch");
+	}
+
+	Protocol::ChatNotification decoded;
+
+	if (!Protocol::Decode(encoded, decoded) ||
+		decoded.Nickname != "Kim" ||
+		decoded.Message != "Hi")
+	{
+		throw std::runtime_error("Decode failed");
+	}
+
+	auto truncated = encoded;
+	truncated.pop_back();
+
+	if (Protocol::Decode(truncated, decoded))
+	{
+		throw std::runtime_error("Truncated packet accepted");
+	}
+
+	auto extra = encoded;
+	extra.push_back('X');
+
+	if (Protocol::Decode(extra, decoded))
+	{
+		throw std::runtime_error("Extra byte accepted");
+	}
+
+	Protocol::LoginResponse response;
+
+	if (Protocol::Decode(Protocol::PacketBody{ 99 }, response))
+	{
+		throw std::runtime_error("Unknown result accepted");
+	}
+
+	std::cout << "[Codec] Checks passed.\n";
+}
+
 int main()
 {
+	CheckPacketCodec();
+
 	TcpClient client;
 
 	if (!client.Connect("127.0.0.1", 32452))
@@ -284,7 +308,7 @@ int main()
 
 	while (running)
 	{
-		if (_kbhit())
+		while (_kbhit())
 		{
 			const int key = _getch();
 			// 방향키·기능키의 확장 입력은 무시

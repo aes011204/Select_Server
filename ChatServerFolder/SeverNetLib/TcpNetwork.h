@@ -4,7 +4,8 @@
 #include <deque>
 #include <vector>
 #include "ServerNetErrorCode.h"
-
+#include "INetwork.h"
+#include "NetworkConfig.h"
 #include "../../Common/PacketProtocol.h"
 //#include "ReceivedPacket.h"
 #include "NetworkEvent.h"
@@ -24,7 +25,7 @@ namespace NServerNetLib
 	};
 
 
-	class TcpNetwork
+	class TcpNetwork : public INetwork
 	{
 	public:
 		TcpNetwork();
@@ -34,15 +35,15 @@ namespace NServerNetLib
 		TcpNetwork& operator= (const TcpNetwork&) = delete;
 
 	public:
-		NET_ERROR_CODE Init(UINT16 port);
+		NET_ERROR_CODE Init(const NetworkConfig& config);
 		bool Run();
 		void Release();
 
 
-		bool TryPopEvent(NetworkEvent& outEvent);
-		bool IsConnected(SessionId sessionId) const;
-		bool SendPacket(SessionId sessionId, UINT16 packetId, const char* body, size_t bodySize);
-		void Disconnect(SessionId sessionId);
+		bool TryPopEvent(NetworkEvent& outEvent)override;
+		bool IsConnected(SessionId sessionId) const override;
+		bool SendPacket(SessionId sessionId, UINT16 packetId, const char* body, size_t bodySize) override;
+		void Disconnect(SessionId sessionId) override;
 
 	private:
 		NET_ERROR_CODE SetNonBlockSocket(const SOCKET sock);
@@ -62,6 +63,8 @@ namespace NServerNetLib
 		void PushConnectionEvent(NetworkEventType type, SessionId sessionId);
 
 	private:
+		NetworkConfig m_config{};
+
 		SOCKET m_listenSocket = INVALID_SOCKET;
 		bool m_winsockStarted = false;
 
@@ -70,15 +73,7 @@ namespace NServerNetLib
 
 		SessionId m_lastSessionId = 0; 
 
-		// 읽기 집합에서 리스닝 소켓 한자리를 제외
-		static constexpr size_t MAX_CLIENTS = FD_SETSIZE - 1;
 
-		// 클라이언트 별 송산 대기 데이터 상한 = 1mib
-		static constexpr size_t MAX_SEND_BUFFER = 1024 * 1024;
-
-		static constexpr size_t MAX_RECV_BUFFER = Protocol::MAX_PACKET_SIZE * 2;
-
-		static constexpr size_t MAX_PENDING_PACKETS = 4096;
 	};
 
 }

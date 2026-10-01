@@ -133,6 +133,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ConsoleHost.cpp" />
+    <ClCompile Include="ServerApp.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\LogicLib\LogicLib.vcxproj">
@@ -141,6 +142,10 @@
     <ProjectReference Include="..\SeverNetLib\SeverNetLib.vcxproj">
       <Project>{96f31703-d7f0-4eca-a0ba-c23e1286ac50}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ServerApp.h" />
+    <ClInclude Include="ServerConfig.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
