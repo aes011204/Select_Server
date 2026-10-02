@@ -30,6 +30,8 @@ namespace NLogicLib
 		friend class RoomManager;
 		bool RemoveMember(NServerNetLib::SessionId sessionId);
 
+		bool AddMember(NServerNetLib::SessionId sessionId);
+
 	private:
 		RoomId m_id;
 		std::string m_title;

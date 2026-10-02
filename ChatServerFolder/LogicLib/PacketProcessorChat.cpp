@@ -22,6 +22,24 @@ void NLogicLib::PacketProcessor::HandleChat(const NServerNetLib::NetworkEvent& e
 		return;
 	}
 
+	if (sender->GetState() != UserState::InRoom)
+	{
+		SendChatResult(event.Session,Protocol::ChatResult::NotInRoom);
+		return;
+	}
+
+	const RoomId roomId = sender->GetRoomId();
+	const Room* room = m_rooms.Find(roomId);
+
+	if (room == nullptr || !room->Contains(event.Session))
+	{
+		std::cerr<< "[Chat] User/room state mismatch. Session: "<< event.Session<< '\n';
+
+		SendChatResult(event.Session,Protocol::ChatResult::StateMismatch);
+		return;
+	}
+
+
 	// 발신자의 이름은 서버의 사용자 정보에서 가져옴
 	Protocol::ChatRequest request;
 
@@ -59,7 +77,10 @@ void NLogicLib::PacketProcessor::HandleChat(const NServerNetLib::NetworkEvent& e
 
 
 	//5. 현제 로그인 사용자들의 세션 목록
-	const auto targets = m_users.GetSessionId();
+	const auto targets = room->GetMembers();
+
+	if (!SendChatResult(event.Session,Protocol::ChatResult::Success))
+		return;
 
 	//6. 발신지를 포함한 로그인 사용자에게 알림
 	for (SessionId target : targets)

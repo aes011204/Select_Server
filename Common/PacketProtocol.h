@@ -23,7 +23,10 @@ namespace Protocol
 	{
 		Success = 0,
 		NotLoggedIn = 1,
-		InvalidMessage = 2
+		InvalidMessage = 2,
+
+		NotInRoom = 3,
+		StateMismatch = 4
 	};
 
 	constexpr std::size_t MAX_CHAT_MESSAGE_BYTES = 256;

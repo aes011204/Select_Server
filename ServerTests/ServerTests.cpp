@@ -6,7 +6,7 @@
 #include "../ChatServerFolder/LogicLib/RoomManager.h"
 #include "../Common/PacketID.h"
 #include "../Common/PacketCode.h"
-
+#include "../Common/RoomPacketCodec.h"
 #include <chrono>
 #include <exception>
 #include <iostream>
@@ -187,7 +187,67 @@ void TestChatBroadcast()
     QueueLogin(network, 2, "Lee");
 
     logic.Update();
+
+    Protocol::RoomCreateRequest createRequest;
+    createRequest.Title = "Test Room";
+
+    Protocol::PacketBody body;
+
+    Check(
+        Protocol::Encode(createRequest, body),
+        "Could not encode room creation");
+
+    network.Receive(
+        1,
+        Protocol::ROOM_CREATE_REQ,
+        body);
+
+    logic.Update();
+
+    Protocol::RoomActionResponse createResponse;
+
+    Check(
+        Protocol::Decode(
+            FindLastPacket(
+                network, 1, Protocol::ROOM_CREATE_RES).Body,
+            createResponse),
+        "Could not decode room creation");
+
+    Check(
+        createResponse.Result == Protocol::RoomResult::Success,
+        "Room creation should succeed");
+
+    Protocol::RoomEnterRequest enterRequest;
+    enterRequest.RoomId = createResponse.RoomId;
+
+    Check(
+        Protocol::Encode(enterRequest, body),
+        "Could not encode room entry");
+
+    network.Receive(
+        2,
+        Protocol::ROOM_ENTER_REQ,
+        body);
+
+    logic.Update();
+
+    Protocol::RoomActionResponse enterResponse;
+
+    Check(
+        Protocol::Decode(
+            FindLastPacket(
+                network, 2, Protocol::ROOM_ENTER_RES).Body,
+            enterResponse),
+        "Could not decode room entry");
+
+    Check(
+        enterResponse.Result == Protocol::RoomResult::Success,
+        "Room entry should succeed");
+
+    // 입장 알림과 응답을 비운 뒤 채팅 결과만 검사한다.
     network.Sent.clear();
+
+  
 
     Protocol::ChatRequest request;
     request.Message = "Hello";

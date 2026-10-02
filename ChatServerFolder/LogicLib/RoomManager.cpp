@@ -1,12 +1,15 @@
 #include "RoomManager.h"
 #include <stdexcept>
+#include <Windows.h>
+#include <algorithm>
 namespace NLogicLib
 {
     NLogicLib::RoomManager::RoomManager(UserManager& users, RoomConfig config)
         : m_users(users), m_config (config)
     {
         if (m_config.MaxRooms == 0 ||
-            m_config.Capacity == 0)
+            m_config.Capacity == 0 ||
+            m_config.Capacity > 255)
         {
             throw std::invalid_argument(
                 "Invalid room configuration.");
@@ -32,10 +35,11 @@ namespace NLogicLib
         if (user->GetRoomId() != INVALID_ROOM_ID)
             return RoomResult::StateMismatch;
 
-        // 오늘은 내부 호출용으로 기본적인 빈 제목만 검사한다.
-        // 외부 패킷을 연결할 때 UTF-8·길이 정책을 추가한다.
-        if (title.empty())
+        //  UTF-8·길이 정책
+        if (!IsValidTitle(title))
+        {
             return RoomResult::InvalidTitle;
+        }
 
         if (m_rooms.size() >= m_config.MaxRooms)
             return RoomResult::RoomLimitReached;
@@ -104,5 +108,107 @@ namespace NLogicLib
             return nullptr;
 
         return &it->second;
+    }
+    RoomResult RoomManager::EnterRoom(NServerNetLib::SessionId sessionId, RoomId roomId)
+    {
+        User* user = m_users.FindMutable(sessionId);
+
+        if (user == nullptr)
+            return RoomResult::UserNotFound;
+
+        if (user->GetState() != UserState::Lobby)
+            return RoomResult::AlreadyInRoom;
+
+        if (user->GetRoomId() != INVALID_ROOM_ID)
+            return RoomResult::StateMismatch;
+
+        const auto it = m_rooms.find(roomId);
+
+        if (it == m_rooms.end())
+            return RoomResult::RoomNotFound;
+
+        Room& room = it->second;
+
+        if (room.Contains(sessionId))
+            return RoomResult::StateMismatch;
+
+        if (room.GetUserCount() >= room.GetCapacity())
+            return RoomResult::RoomFull;
+
+        if (!room.AddMember(sessionId))
+            return RoomResult::StateMismatch;
+
+        user->EnterRoom(roomId);
+
+
+        return RoomResult::Success;
+    }
+    std::vector<Protocol::RoomInfo> RoomManager::GetRoomsAfter(RoomId afterRoomId, bool& outHasMore) const
+    {
+        std::vector<Protocol::RoomInfo> result;
+
+        for (const auto& entry : m_rooms)
+        {
+            const Room& room = entry.second;
+
+            if (room.GetId() <= afterRoomId)
+            {
+                continue;
+            }
+
+            Protocol::RoomInfo info;
+            info.RoomId = room.GetId();
+            info.UserCount = static_cast<UINT8>(room.GetUserCount());
+            info.Capacity = static_cast<UINT8>(room.GetCapacity());
+            info.Title = room.GetTitle();
+
+            result.push_back(std::move(info));
+        }
+
+        std::sort(result.begin(), result.end(),
+            [](const Protocol::RoomInfo& a,
+                const Protocol::RoomInfo& b)
+            {
+                return a.RoomId < b.RoomId;
+            });
+
+        outHasMore =result.size() > Protocol::ROOM_LIST_PAGE_SIZE;
+
+        if (outHasMore)
+        {
+            result.resize(Protocol::ROOM_LIST_PAGE_SIZE);
+        }
+
+        return result;
+    }
+    bool RoomManager::IsValidTitle(const std::string& title) const
+    {
+        if (title.empty() ||title.size() > Protocol::MAX_ROOM_TITLE_BYTES)
+            return false;
+
+        bool hasNonSpace = false;
+
+        for (unsigned char ch : title)
+        {
+            if (ch < 0x20 || ch == 0x7F)
+                return false;
+
+            if (ch != ' ')
+            {
+                hasNonSpace = true;
+            }
+        }
+
+        if (!hasNonSpace)
+            return false;
+        
+        //입력이 올바른 UTF-8인지 검사
+        return MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            title.data(),
+            static_cast<int>(title.size()),
+            nullptr,
+            0) > 0;
     }
 }

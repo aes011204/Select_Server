@@ -35,4 +35,14 @@ namespace NLogicLib
 
         return true;
     }
+    bool Room::AddMember(NServerNetLib::SessionId sessionId)
+    {
+        if (sessionId == 0 ||Contains(sessionId) || m_members.size() >= m_capacity)
+        {
+            return false;
+        }
+
+        m_members.push_back(sessionId);
+        return true;
+    }
 }

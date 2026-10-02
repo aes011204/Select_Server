@@ -1,12 +1,13 @@
 #pragma once
 
 #include <windows.h>
+#include "../../Common/RoomPackets.h"
 namespace NLogicLib
 {
     using RoomId = UINT32;
+    using RoomResult = Protocol::RoomResult;
 
     constexpr RoomId INVALID_ROOM_ID = 0;
-
     enum class UserState
     {
         Lobby,
@@ -19,7 +20,7 @@ namespace NLogicLib
         size_t Capacity = 2;
     };
 
-    enum class RoomResult
+    /*enum class RoomResult
     {
         Success,
 
@@ -32,5 +33,6 @@ namespace NLogicLib
         RoomIdExhausted,
 
         StateMismatch
-    };
+    };*/
+    // common 으로 
 }

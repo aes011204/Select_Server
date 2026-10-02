@@ -19,6 +19,13 @@ namespace NLogicLib
 		const Room* Find(RoomId roomId) const;
 
 		std::size_t GetRoomCount() const { return m_rooms.size(); };
+
+		RoomResult EnterRoom(NServerNetLib::SessionId sessionId,RoomId roomId);
+
+		std::vector<Protocol::RoomInfo> GetRoomsAfter(RoomId afterRoomId,bool& outHasMore) const;
+
+	private:
+		bool IsValidTitle(const std::string& title) const;
 	private:
 		UserManager& m_users;
 		RoomConfig m_config;

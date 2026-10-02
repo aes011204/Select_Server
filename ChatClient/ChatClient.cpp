@@ -10,12 +10,63 @@
 #include "../Common/PacketID.h"
 #include "../Common/PacketUtils.h"
 #include "../Common/PacketCode.h"
+#include "../Common/RoomPacketCodec.h"
+
+
+
+
 using namespace NChatClient;
+
+// 함수 선언
+bool SendEncodedBody(NChatClient::TcpClient& client, UINT16 packetId, const Protocol::PacketBody& body);
+bool TryParseRoomId(const std::string& text, UINT32& out);
+bool ProcessCommand(NChatClient::TcpClient& client, const std::string& command);
+bool ProcessChatNotification(const NChatClient::ClientPacket& packet);
+bool ProcessResponse(const NChatClient::ClientPacket& packet);
+void CheckPacketCodec();
+const char* RoomResultText(Protocol::RoomResult result);
+
+
 bool SendEncodedBody(NChatClient::TcpClient& client,UINT16 packetId,const Protocol::PacketBody& body)
 {
 	const std::string bytes(body.begin(), body.end());
 
 	return client.SendPacket(packetId, bytes);
+}
+
+bool TryParseRoomId(
+	const std::string& text,
+	UINT32& out)
+{
+	if (text.empty())
+	{
+		return false;
+	}
+
+	std::uint32_t value = 0;
+
+	const auto maxValue =
+		(std::numeric_limits<std::uint32_t>::max)();
+
+	for (unsigned char ch : text)
+	{
+		if (ch < '0' || ch > '9')
+		{
+			return false;
+		}
+
+		const std::uint32_t digit = ch - '0';
+
+		if (value > (maxValue - digit) / 10)
+		{
+			return false;
+		}
+
+		value = value * 10 + digit;
+	}
+
+	out = value;
+	return true;
 }
 
 bool ProcessCommand(
@@ -32,6 +83,10 @@ bool ProcessCommand(
 		std::cout << "login <nickname>\n";
 		std::cout << "echo <message>\n";
 		std::cout << "quit\n";
+		std::cout << "create <title>\n";
+		std::cout << "rooms [afterRoomId]\n";
+		std::cout << "enter <roomId>\n";
+		std::cout << "leave\n";
 		return true;
 	}
 
@@ -96,6 +151,100 @@ bool ProcessCommand(
 		}
 
 		return true;
+	}
+
+	if (command == "create" ||
+		command.rfind("create ", 0) == 0)
+	{
+		Protocol::RoomCreateRequest request;
+
+		request.Title =
+			command == "create"
+			? std::string{}
+		: command.substr(7);
+
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cout << "Room title is too long to encode.\n";
+			return true;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::ROOM_CREATE_REQ,
+			body);
+	}
+
+	if (command == "rooms" ||
+		command.rfind("rooms ", 0) == 0)
+	{
+		Protocol::RoomListRequest request;
+
+		if (command != "rooms" &&
+			!TryParseRoomId(command.substr(6), request.AfterRoomId))
+		{
+			std::cout << "Usage: rooms [afterRoomId]\n";
+			return true;
+		}
+
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode room list request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::ROOM_LIST_REQ,
+			body);
+	}
+
+	if (command == "enter" ||
+		command.rfind("enter ", 0) == 0)
+	{
+		Protocol::RoomEnterRequest request;
+
+		if (command == "enter" ||
+			!TryParseRoomId(command.substr(6), request.RoomId) ||
+			request.RoomId == 0)
+		{
+			std::cout << "Usage: enter <roomId>\n";
+			return true;
+		}
+
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode room enter request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::ROOM_ENTER_REQ,
+			body);
+	}
+
+	if (command == "leave")
+	{
+		Protocol::RoomLeaveRequest request;
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode leave request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::ROOM_LEAVE_REQ,
+			body);
 	}
 
 	if (!command.empty())
@@ -209,6 +358,13 @@ bool ProcessResponse(const ClientPacket& packet)
 				<< "with no control characters or only spaces.\n";
 			return true;
 
+		case Protocol::ChatResult::NotInRoom:
+			std::cout << "\n[Chat error] Enter a room first.\n";
+			return true;
+
+		case Protocol::ChatResult::StateMismatch:
+			std::cout << "\n[Chat error] Server room state mismatch.\n";
+			return true;
 		default:
 			std::cerr << "Unknown chat result.\n";
 			return false;
@@ -217,6 +373,133 @@ bool ProcessResponse(const ClientPacket& packet)
 
 	case Protocol::CHAT_NTF:
 		return ProcessChatNotification(packet);
+
+	case Protocol::ROOM_LIST_RES:
+	{
+		Protocol::RoomListResponse response;
+
+		if (!Protocol::Decode(packet.Body, response))
+		{
+			std::cerr << "Invalid room list response.\n";
+			return false;
+		}
+
+		if (response.Result != Protocol::RoomResult::Success)
+		{
+			std::cout
+				<< "[Rooms] "
+				<< RoomResultText(response.Result)
+				<< '\n';
+
+			return true;
+		}
+
+		if (response.Rooms.empty())
+		{
+			std::cout << "[Rooms] No rooms on this page.\n";
+		}
+
+		for (const auto& room : response.Rooms)
+		{
+			std::cout
+				<< "[Room " << room.RoomId << "] "
+				<< room.Title
+				<< " ("
+				<< static_cast<int>(room.UserCount)
+				<< "/"
+				<< static_cast<int>(room.Capacity)
+				<< ")\n";
+		}
+
+		if (response.HasMore)
+		{
+			std::cout
+				<< "Next page: rooms "
+				<< response.Rooms.back().RoomId
+				<< '\n';
+		}
+
+		return true;
+	}
+
+	case Protocol::ROOM_CREATE_RES:
+	case Protocol::ROOM_ENTER_RES:
+	case Protocol::ROOM_LEAVE_RES:
+	{
+		Protocol::RoomActionResponse response;
+
+		if (!Protocol::Decode(packet.Body, response))
+		{
+			std::cerr << "Invalid room action response.\n";
+			return false;
+		}
+
+		const char* action = "Room";
+
+		if (packet.PacketId == Protocol::ROOM_CREATE_RES)
+		{
+			action = "Create";
+		}
+		else if (packet.PacketId == Protocol::ROOM_ENTER_RES)
+		{
+			action = "Enter";
+		}
+		else
+		{
+			action = "Leave";
+		}
+
+		std::cout
+			<< "[" << action << "] "
+			<< RoomResultText(response.Result);
+
+		if (response.Result == Protocol::RoomResult::Success)
+		{
+			std::cout
+				<< ", room ID: "
+				<< response.RoomId;
+		}
+
+		std::cout << '\n';
+		return true;
+	}
+
+	case Protocol::ROOM_MEMBER_NTF:
+	{
+		Protocol::RoomMemberNotification notification;
+
+		if (!Protocol::Decode(packet.Body, notification))
+		{
+			std::cerr << "Invalid room member notification.\n";
+			return false;
+		}
+
+		const char* action = "";
+
+		switch (notification.Change)
+		{
+		case Protocol::RoomMemberChange::Joined:
+			action = "joined";
+			break;
+
+		case Protocol::RoomMemberChange::Left:
+			action = "left";
+			break;
+
+		case Protocol::RoomMemberChange::Disconnected:
+			action = "disconnected";
+			break;
+		}
+
+		std::cout
+			<< "\n[Room " << notification.RoomId << "] "
+			<< notification.Nickname
+			<< " " << action
+			<< ".\n";
+
+		return true;
+	}
+
 	default:
 		std::cerr << "Unexpected packet ID: "
 			<< packet.PacketId << '\n';
@@ -281,6 +564,28 @@ void CheckPacketCodec()
 	}
 
 	std::cout << "[Codec] Checks passed.\n";
+}
+
+const char* RoomResultText(Protocol::RoomResult result)
+{
+	using R = Protocol::RoomResult;
+
+	switch (result)
+	{
+	case R::Success:          return "Success";
+	case R::UserNotFound:     return "Login first";
+	case R::AlreadyInRoom:    return "Already in a room";
+	case R::NotInRoom:        return "Not in a room";
+	case R::InvalidTitle:     return "Invalid room title";
+	case R::RoomLimitReached: return "Room limit reached";
+	case R::RoomIdExhausted:   return "Room ID exhausted";
+	case R::StateMismatch:    return "Server state mismatch";
+	case R::RoomNotFound:     return "Room not found";
+	case R::RoomFull:         return "Room is full";
+	case R::InvalidRequest:   return "Invalid request";
+	}
+
+	return "Unknown result";
 }
 
 int main()

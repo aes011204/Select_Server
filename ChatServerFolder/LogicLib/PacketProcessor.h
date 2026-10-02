@@ -56,10 +56,19 @@ namespace NLogicLib
 		using Clock = std::chrono::steady_clock;
 
 		void HandleConnected(const NServerNetLib::NetworkEvent& event);
-
 		bool IsLoginExpired(SessionId sessionId) const;
-
 		void CheckLoginTimeouts();
+
+		// 방
+		void HandleRoomCreate(const NServerNetLib::NetworkEvent& event);
+		void HandleRoomList(const NServerNetLib::NetworkEvent& event);
+		void HandleRoomEnter(const NServerNetLib::NetworkEvent& event);
+		bool SendRoomActionResult(SessionId sessionId,UINT16 responseId,Protocol::RoomResult result,
+			UINT32 roomId);
+
+		//방 채팅
+		void NotifyRoomMember(RoomId roomId,Protocol::RoomMemberChange change,const std::string& nickname);
+		void HandleRoomLeave(const NServerNetLib::NetworkEvent& event);
 
 	private:
 		std::array<PacketHandler, HANDLER_COUNT> m_handlers{};

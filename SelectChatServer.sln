@@ -13,6 +13,17 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SeverNetLib", "ChatServerFo
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ServerTests", "ServerTests\ServerTests.vcxproj", "{6B35B878-A8FA-4E05-BA3E-A658B11D9A0A}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "common", "common", "{A0879A11-3E0C-4466-9098-10085C39768F}"
+	ProjectSection(SolutionItems) = preProject
+		Common\PacketCode.h = Common\PacketCode.h
+		Common\PacketID.h = Common\PacketID.h
+		Common\PacketMessages.h = Common\PacketMessages.h
+		Common\PacketProtocol.h = Common\PacketProtocol.h
+		Common\PacketUtils.h = Common\PacketUtils.h
+		Common\RoomPacketCodec.h = Common\RoomPacketCodec.h
+		Common\RoomPackets.h = Common\RoomPackets.h
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64

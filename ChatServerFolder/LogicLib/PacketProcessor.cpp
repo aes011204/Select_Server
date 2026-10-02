@@ -3,10 +3,11 @@
 #include "../../Common/PacketProtocol.h"
 #include "../../Common/PacketID.h"
 #include "../../Common/PacketCode.h"
+#include "../../Common/RoomPacketCodec.h"
 #include <iostream>
 
 NLogicLib::PacketProcessor::PacketProcessor(NServerNetLib::INetwork& network, std::chrono::seconds loginTimeout)
-	: m_network(network), m_loginTimeout(loginTimeout),m_rooms(m_users)
+	: m_network(network), m_loginTimeout(loginTimeout), m_rooms(m_users)
 {
 	if (m_loginTimeout.count() <= 0)
 	{
@@ -62,7 +63,7 @@ void NLogicLib::PacketProcessor::ProcessPacket(const NServerNetLib::NetworkEvent
 
 	if (index >= m_handlers.size())
 	{
-		std::cerr<< "Packet ID is out of range. Session: "<< event.Session<< ", ID: "<< event.PacketId<< '\n';
+		std::cerr << "Packet ID is out of range. Session: " << event.Session << ", ID: " << event.PacketId << '\n';
 
 		m_network.Disconnect(event.Session);
 		return;
@@ -72,7 +73,7 @@ void NLogicLib::PacketProcessor::ProcessPacket(const NServerNetLib::NetworkEvent
 
 	if (!handler)
 	{
-		std::cerr<< "Unsupported packet ID. Session: "<< event.Session<< ", ID: "<< event.PacketId<< '\n';
+		std::cerr << "Unsupported packet ID. Session: " << event.Session << ", ID: " << event.PacketId << '\n';
 
 		m_network.Disconnect(event.Session);
 		return;
@@ -104,7 +105,7 @@ void NLogicLib::PacketProcessor::HandleLogin(const NServerNetLib::NetworkEvent& 
 
 	const auto body = Protocol::Encode(response);
 
-	if(false == m_network.SendPacket(event.Session, Protocol::LOGIN_RES, body.data(),body.size()))
+	if (false == m_network.SendPacket(event.Session, Protocol::LOGIN_RES, body.data(), body.size()))
 	{
 		m_network.Disconnect(event.Session);
 		return;
@@ -127,21 +128,33 @@ void NLogicLib::PacketProcessor::HandleDisconnected(SessionId sessionId)
 
 	const User* user = m_users.Find(sessionId);
 
-	if (user != nullptr)
+	if (user == nullptr)
 	{
-		// 방정리가 사용자제거보다 우선
-		const auto result = m_rooms.LeaveRoom(sessionId);
-
-		if (result != RoomResult::Success && result != RoomResult::NotInRoom)
-		{
-			std::cerr<< "[Room] Cleanup failed. Session: "<< sessionId<< ", result: "
-				<< static_cast<int>(result)<< '\n';
-		}
-
-		// Remove() 전에 출력해야 함
-		std::cout << "[Logic] Remove user: " << user->Nickname << '\n';
+		return;
 	}
+
+	// 사용자 삭제 후에도 필요한 값은 먼저 복사한다.
+	const RoomId oldRoomId = user->GetRoomId();
+	const std::string nickname = user->Nickname;
+	// 방정리가 사용자제거보다 우선
+	const auto result = m_rooms.LeaveRoom(sessionId);
+
+	if (result != RoomResult::Success && result != RoomResult::NotInRoom)
+	{
+		std::cerr << "[Room] Cleanup failed. Session: " << sessionId << ", result: "
+			<< static_cast<int>(result) << '\n';
+	}
+
+	// Remove() 전에 출력해야 함
+	std::cout << "[Logic] Remove user: " << user->Nickname << '\n';
+
 	m_users.Remove(sessionId);
+
+
+	if (result == RoomResult::Success)
+	{
+		NotifyRoomMember(oldRoomId,Protocol::RoomMemberChange::Disconnected,nickname);
+	}
 
 	std::cout << "[Logic] Disconnected. Session: " << sessionId << '\n';
 }
@@ -152,18 +165,25 @@ void NLogicLib::PacketProcessor::RegisterHandlers()
 	RegisterHandler(Protocol::LOGIN_REQ, [this](const Event& event) {HandleLogin(event);});
 	RegisterHandler(Protocol::ECHO_REQ, [this](const Event& event) {HandleEcho(event);});
 	RegisterHandler(Protocol::CHAT_REQ, [this](const Event& event) {HandleChat(event);});
+
+	//방
+	RegisterHandler(Protocol::ROOM_CREATE_REQ, [this](const Event& event) { HandleRoomCreate(event); });
+	RegisterHandler(Protocol::ROOM_LIST_REQ, [this](const Event& event) { HandleRoomList(event); });
+	RegisterHandler(Protocol::ROOM_ENTER_REQ, [this](const Event& event) { HandleRoomEnter(event); });
+
+	RegisterHandler(Protocol::ROOM_LEAVE_REQ, [this](const Event& event) {HandleRoomLeave(event);});
 }
 
 void NLogicLib::PacketProcessor::RegisterHandler(UINT16 packetId, PacketHandler handler)
 {
-	const auto index =static_cast<size_t>(packetId);
+	const auto index = static_cast<size_t>(packetId);
 
 	if (index >= m_handlers.size())
 	{
 		throw std::out_of_range("Packet handler ID is out of range.");
 	}
 
-	if (nullptr==handler)
+	if (nullptr == handler)
 	{
 		throw std::invalid_argument("Packet handler must not be empty.");
 	}
@@ -191,7 +211,7 @@ void NLogicLib::PacketProcessor::HandleEcho(const NServerNetLib::NetworkEvent& e
 void NLogicLib::PacketProcessor::HandleConnected(const NServerNetLib::NetworkEvent& event)
 {
 	//새 연결의 마감 시각 등록
-	
+
 	// 처리 전에 이미 연결이 끝났을 수 있다.
 	if (!m_network.IsConnected(event.Session))
 		return;
@@ -238,6 +258,197 @@ void NLogicLib::PacketProcessor::CheckLoginTimeouts()
 			<< '\n';
 
 		m_network.Disconnect(sessionId);
+	}
+}
+
+void NLogicLib::PacketProcessor::HandleRoomCreate(const NServerNetLib::NetworkEvent& event)
+{
+	Protocol::RoomCreateRequest request;
+
+	if (!Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
+
+	RoomId roomId = INVALID_ROOM_ID;
+
+	const auto result = m_rooms.CreateRoom(event.Session, request.Title, roomId);
+
+	SendRoomActionResult(event.Session, Protocol::ROOM_CREATE_RES, result, roomId);
+
+	//들어옴 알람
+	if (result != RoomResult::Success)
+		return;
+
+	const User* user = m_users.Find(event.Session);
+
+	if (user == nullptr)
+		return;
+
+	const std::string nickname = user->Nickname;
+
+	NotifyRoomMember(roomId, Protocol::RoomMemberChange::Joined, nickname);
+}
+
+void NLogicLib::PacketProcessor::HandleRoomList(const NServerNetLib::NetworkEvent& event)
+{
+	Protocol::RoomListRequest request;
+
+	if (!Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
+
+	Protocol::RoomListResponse response;
+
+	const User* user = m_users.Find(event.Session);
+
+	if (user == nullptr)
+	{
+		response.Result = Protocol::RoomResult::UserNotFound;
+	}
+	else if (user->GetState() != UserState::Lobby)
+	{
+		response.Result = Protocol::RoomResult::AlreadyInRoom;
+	}
+	else
+	{
+		response.Rooms = m_rooms.GetRoomsAfter(request.AfterRoomId, response.HasMore);
+	}
+
+	Protocol::PacketBody body;
+
+	if (!Protocol::Encode(response, body) ||
+		!m_network.SendPacket(event.Session, Protocol::ROOM_LIST_RES, body.data(), body.size()))
+	{
+		m_network.Disconnect(event.Session);
+	}
+}
+
+void NLogicLib::PacketProcessor::HandleRoomEnter(const NServerNetLib::NetworkEvent& event)
+{
+	Protocol::RoomEnterRequest request;
+
+	if (!Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
+
+	const auto result = m_rooms.EnterRoom(event.Session, request.RoomId);
+
+	SendRoomActionResult(event.Session, Protocol::ROOM_ENTER_RES, result, request.RoomId);
+
+	//들어옴 알람
+	if (result != RoomResult::Success)
+		return;
+
+	const User* user = m_users.Find(event.Session);
+
+	if (user == nullptr)
+		return;
+
+	const std::string nickname = user->Nickname;
+
+	NotifyRoomMember(request.RoomId, Protocol::RoomMemberChange::Joined, nickname);
+}
+
+bool NLogicLib::PacketProcessor::SendRoomActionResult(SessionId sessionId, UINT16 responseId, Protocol::RoomResult result, UINT32 roomId)
+{
+	Protocol::RoomActionResponse response;
+	response.Result = result;
+
+	response.RoomId =
+		result == Protocol::RoomResult::Success
+		? roomId
+		: 0;
+
+	Protocol::PacketBody body;
+
+	if (!Protocol::Encode(response, body) ||
+		!m_network.SendPacket(
+			sessionId,
+			responseId,
+			body.data(),
+			body.size()))
+	{
+		m_network.Disconnect(sessionId);
+		return false;
+	}
+
+	return true;
+}
+
+void NLogicLib::PacketProcessor::NotifyRoomMember(RoomId roomId, Protocol::RoomMemberChange change, const std::string& nickname)
+{
+	const Room* room = m_rooms.Find(roomId);
+
+	if (room == nullptr)
+	{
+		// 마지막 사용자가 나가서 삭제된 방일 수 있다.
+		return;
+	}
+
+	const auto targets = room->GetMembers();
+
+	Protocol::RoomMemberNotification notification;
+	notification.RoomId = roomId;
+	notification.Change = change;
+	notification.Nickname = nickname;
+
+	Protocol::PacketBody body;
+
+	if (!Protocol::Encode(notification, body))
+	{
+		std::cerr << "Could not encode room member notification.\n";
+		return;
+	}
+
+	for (SessionId target : targets)
+	{
+		if (!m_network.IsConnected(target))
+		{
+			continue;
+		}
+
+		if (!m_network.SendPacket(target, Protocol::ROOM_MEMBER_NTF, body.data(), body.size()))
+		{
+			m_network.Disconnect(target);
+		}
+	}
+}
+
+void NLogicLib::PacketProcessor::HandleRoomLeave(const NServerNetLib::NetworkEvent& event)
+{
+	Protocol::RoomLeaveRequest request;
+
+	if (!Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
+
+	const User* user = m_users.Find(event.Session);
+
+	if (user == nullptr)
+	{
+		SendRoomActionResult(event.Session, Protocol::ROOM_LEAVE_RES, RoomResult::UserNotFound, INVALID_ROOM_ID);
+		return;
+	}
+
+	// LeaveRoom()이 사용자 상태를 바꾸기 전에 복사한다.
+	const RoomId oldRoomId = user->GetRoomId();
+	const std::string nickname = user->Nickname;
+
+	const auto result = m_rooms.LeaveRoom(event.Session);
+
+	SendRoomActionResult(event.Session, Protocol::ROOM_LEAVE_RES, result, oldRoomId);
+
+	if (result == RoomResult::Success)
+	{
+		NotifyRoomMember(oldRoomId, Protocol::RoomMemberChange::Left, nickname);
 	}
 }
 

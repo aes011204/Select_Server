@@ -85,14 +85,15 @@ namespace Protocol
 			return false;
 		}
 
-		const auto value =
-			static_cast<unsigned char>(body[0]);
+		const auto value = static_cast<unsigned char>(body[0]);
 
 		switch (static_cast<ChatResult>(value))
 		{
 		case ChatResult::Success:
 		case ChatResult::NotLoggedIn:
 		case ChatResult::InvalidMessage:
+		case ChatResult::NotInRoom:
+		case ChatResult::StateMismatch:
 			out.Result = static_cast<ChatResult>(value);
 			return true;
 
