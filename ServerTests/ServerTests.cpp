@@ -515,6 +515,95 @@ void TestRoomLifecycle()
         anotherId != roomId,
         "New room should receive a new ID");
 }
+void TestReadyAndStartRules()
+{
+    NLogicLib::UserManager users;
+    NLogicLib::RoomManager rooms(users);
+
+    Check(
+        users.Login(1, "Kim") == Protocol::LoginResult::Success,
+        "Kim login failed");
+
+    Check(
+        users.Login(2, "Lee") == Protocol::LoginResult::Success,
+        "Lee login failed");
+
+    NLogicLib::RoomId roomId = 0;
+
+    Check(
+        rooms.CreateRoom(1, "Game Room", roomId) ==
+        NLogicLib::RoomResult::Success,
+        "Room creation failed");
+
+    Check(
+        rooms.StartGame(1) ==
+        NLogicLib::RoomResult::NotEnoughPlayers,
+        "One player must not start");
+
+    Check(
+        rooms.EnterRoom(2, roomId) ==
+        NLogicLib::RoomResult::Success,
+        "Room entry failed");
+
+    Check(
+        rooms.StartGame(2) ==
+        NLogicLib::RoomResult::NotHost,
+        "Guest must not start");
+
+    Check(
+        rooms.SetReady(1, true) ==
+        NLogicLib::RoomResult::HostCannotReady,
+        "Host must not use ready");
+
+    Check(
+        rooms.StartGame(1) ==
+        NLogicLib::RoomResult::NotAllReady,
+        "Unready guest must prevent start");
+
+    Check(
+        rooms.SetReady(2, true) ==
+        NLogicLib::RoomResult::Success,
+        "Guest ready failed");
+
+    Check(
+        rooms.StartGame(1) ==
+        NLogicLib::RoomResult::Success,
+        "Ready room should start");
+
+    const auto* room = rooms.Find(roomId);
+
+    Check(
+        room != nullptr &&
+        room->GetPhase() == Protocol::RoomPhase::Playing,
+        "Room should be playing");
+
+    Check(
+        !room->IsReady(2),
+        "Ready state should be cleared after start");
+
+    Check(
+        rooms.SetReady(2, false) ==
+        NLogicLib::RoomResult::GameInProgress,
+        "Ready must not change during game");
+
+    Check(
+        rooms.LeaveRoom(1) ==
+        NLogicLib::RoomResult::Success,
+        "Host leave failed");
+
+    room = rooms.Find(roomId);
+
+    Check(room != nullptr, "Guest room should remain");
+
+    Check(
+        room->GetHostSession() == 2,
+        "Remaining player should become host");
+
+    Check(
+        room->GetPhase() == Protocol::RoomPhase::Waiting,
+        "Room should return to waiting");
+}
+
 int main()
 {
     int failed = 0;
@@ -544,6 +633,10 @@ int main()
     if (!RunTest("Room lifecycle", TestRoomLifecycle))
         ++failed;
 
+    if (!RunTest("Ready and start rules", TestReadyAndStartRules))
+    {
+        ++failed;
+    }
 
     std::cout
         << "Failed tests: "

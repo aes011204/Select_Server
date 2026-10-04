@@ -87,6 +87,9 @@ bool ProcessCommand(
 		std::cout << "rooms [afterRoomId]\n";
 		std::cout << "enter <roomId>\n";
 		std::cout << "leave\n";
+		std::cout << "ready on\n";
+		std::cout << "ready off\n";
+		std::cout << "start\n";
 		return true;
 	}
 
@@ -244,6 +247,42 @@ bool ProcessCommand(
 		return SendEncodedBody(
 			client,
 			Protocol::ROOM_LEAVE_REQ,
+			body);
+	}
+
+	if (command == "ready on" || command == "ready off")
+	{
+		Protocol::RoomReadyRequest request;
+		request.Ready = command == "ready on";
+
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode ready request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::ROOM_READY_REQ,
+			body);
+	}
+
+	if (command == "start")
+	{
+		Protocol::RoomStartRequest request;
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode start request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::ROOM_START_REQ,
 			body);
 	}
 
@@ -425,6 +464,8 @@ bool ProcessResponse(const ClientPacket& packet)
 	case Protocol::ROOM_CREATE_RES:
 	case Protocol::ROOM_ENTER_RES:
 	case Protocol::ROOM_LEAVE_RES:
+	case Protocol::ROOM_READY_RES:
+	case Protocol::ROOM_START_RES:
 	{
 		Protocol::RoomActionResponse response;
 
@@ -436,17 +477,27 @@ bool ProcessResponse(const ClientPacket& packet)
 
 		const char* action = "Room";
 
-		if (packet.PacketId == Protocol::ROOM_CREATE_RES)
+		switch (packet.PacketId)
 		{
+		case Protocol::ROOM_CREATE_RES:
 			action = "Create";
-		}
-		else if (packet.PacketId == Protocol::ROOM_ENTER_RES)
-		{
+			break;
+
+		case Protocol::ROOM_ENTER_RES:
 			action = "Enter";
-		}
-		else
-		{
+			break;
+
+		case Protocol::ROOM_LEAVE_RES:
 			action = "Leave";
+			break;
+
+		case Protocol::ROOM_READY_RES:
+			action = "Ready";
+			break;
+
+		case Protocol::ROOM_START_RES:
+			action = "Start";
+			break;
 		}
 
 		std::cout
@@ -455,13 +506,12 @@ bool ProcessResponse(const ClientPacket& packet)
 
 		if (response.Result == Protocol::RoomResult::Success)
 		{
-			std::cout
-				<< ", room ID: "
-				<< response.RoomId;
+			std::cout << ", room ID: " << response.RoomId;
 		}
 
 		std::cout << '\n';
 		return true;
+	
 	}
 
 	case Protocol::ROOM_MEMBER_NTF:
@@ -499,7 +549,53 @@ bool ProcessResponse(const ClientPacket& packet)
 
 		return true;
 	}
+	case Protocol::ROOM_STATE_NTF:
+	{
+		Protocol::RoomStateNotification notification;
 
+		if (!Protocol::Decode(packet.Body, notification))
+		{
+			std::cerr << "Invalid room state notification.\n";
+			return false;
+		}
+
+		const bool playing =
+			notification.Phase == Protocol::RoomPhase::Playing;
+
+		std::cout
+			<< "\n[Room " << notification.RoomId << "] "
+			<< (playing ? "Playing" : "Waiting")
+			<< '\n';
+
+		std::cout
+			<< "Host: "
+			<< notification.HostNickname
+			<< '\n';
+
+		for (const auto& player : notification.Players)
+		{
+			const bool isHost =
+				player.Nickname == notification.HostNickname;
+
+			std::cout << "- " << player.Nickname;
+
+			if (isHost)
+			{
+				std::cout << " [Host]";
+			}
+			else if (!playing)
+			{
+				std::cout
+					<< (player.Ready
+						? " [Ready]"
+						: " [Not ready]");
+			}
+
+			std::cout << '\n';
+		}
+
+		return true;
+	}
 	default:
 		std::cerr << "Unexpected packet ID: "
 			<< packet.PacketId << '\n';
@@ -583,6 +679,12 @@ const char* RoomResultText(Protocol::RoomResult result)
 	case R::RoomNotFound:     return "Room not found";
 	case R::RoomFull:         return "Room is full";
 	case R::InvalidRequest:   return "Invalid request";
+	case R::NotHost:		  return "Only the host can start";
+	case R::HostCannotReady:  return "Host uses the start command";
+	case R::NotEnoughPlayers: return "Two players are required";
+	case R::NotAllReady:		return "The other player is not ready";
+	case R::GameAlreadyStarted:	return "Game already started";
+	case R::GameInProgress:		return "Game is in progress";
 	}
 
 	return "Unknown result";

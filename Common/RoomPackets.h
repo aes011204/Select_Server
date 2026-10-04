@@ -24,8 +24,17 @@ namespace Protocol
 
         RoomNotFound = 8,
         RoomFull = 9,
-        InvalidRequest = 10
+        InvalidRequest = 10,
+
+        NotHost = 11,
+        HostCannotReady = 12,
+        NotEnoughPlayers = 13,
+        NotAllReady = 14,
+        GameAlreadyStarted = 15,
+        GameInProgress = 16
     };
+
+
 
     struct RoomCreateRequest
     {
@@ -83,5 +92,40 @@ namespace Protocol
             RoomMemberChange::Joined;
 
         std::string Nickname;
+    };
+
+    // 준비
+    constexpr size_t ROOM_PLAYER_COUNT = 2;
+
+    enum class RoomPhase : UINT8
+    {
+        Waiting = 0,
+        Playing = 1
+    };
+
+    struct RoomReadyRequest
+    {
+        bool Ready = false;
+    };
+
+    struct RoomStartRequest
+    {
+    };
+
+    struct RoomPlayerInfo
+    {
+        std::string Nickname;
+        bool Ready = false;
+    };
+
+    struct RoomStateNotification
+    {
+        UINT32 RoomId = 0;
+
+        RoomPhase Phase = RoomPhase::Waiting;
+        UINT8 Capacity = 2;
+
+        std::string HostNickname;
+        std::vector<RoomPlayerInfo> Players;
     };
 }

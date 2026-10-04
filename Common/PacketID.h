@@ -25,4 +25,13 @@ namespace Protocol
 
 	constexpr UINT16 ROOM_MEMBER_NTF = 28;
 
+
+	constexpr UINT16 ROOM_READY_REQ = 29;
+	constexpr UINT16 ROOM_READY_RES = 30;
+
+	constexpr UINT16 ROOM_START_REQ = 31;
+	constexpr UINT16 ROOM_START_RES = 32;
+
+	constexpr UINT16 ROOM_STATE_NTF = 33;
+
 }

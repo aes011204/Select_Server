@@ -24,6 +24,9 @@ namespace NLogicLib
 
 		std::vector<Protocol::RoomInfo> GetRoomsAfter(RoomId afterRoomId,bool& outHasMore) const;
 
+		//
+		RoomResult SetReady(NServerNetLib::SessionId sessionId,bool ready);
+		RoomResult StartGame(NServerNetLib::SessionId sessionId);
 	private:
 		bool IsValidTitle(const std::string& title) const;
 	private:

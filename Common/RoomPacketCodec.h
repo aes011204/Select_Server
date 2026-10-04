@@ -2,7 +2,7 @@
 
 
 #include <string>
-
+#include <unordered_set>
 #include "PacketCode.h"
 #include "RoomPackets.h"
 
@@ -115,7 +115,7 @@ namespace Protocol
 			UINT8 value = 0;
 
 			if (!reader.U8(value) ||
-				value > static_cast<UINT8>(RoomResult::InvalidRequest))
+				value > static_cast<UINT8>(RoomResult::GameInProgress))
 			{
 				return false;
 			}
@@ -342,8 +342,7 @@ namespace Protocol
 
 	//참가자 알림
 	inline bool Encode(
-		const RoomMemberNotification& packet,
-		PacketBody& out)
+		const RoomMemberNotification& packet,PacketBody& out)
 	{
 		if (packet.RoomId == 0 ||
 			packet.Nickname.empty() ||
@@ -412,6 +411,165 @@ namespace Protocol
 		default:
 			return false;
 		}
+
+		out = std::move(decoded);
+		return true;
+	}
+
+	//
+	inline bool Encode(const RoomReadyRequest& packet,PacketBody& out)
+	{
+		RoomCodecDetail::Writer writer;
+		writer.U8(packet.Ready ? 1 : 0);
+		return writer.Finish(out);
+	}
+
+	inline bool Decode(const PacketBody& body,RoomReadyRequest& out)
+	{
+		RoomCodecDetail::Reader reader(body);
+
+		std::uint8_t ready = 0;
+
+		if (!reader.U8(ready) ||ready > 1 ||!reader.Done())
+		{
+			return false;
+		}
+
+		out.Ready = ready != 0;
+		return true;
+	}
+
+	inline bool Encode(const RoomStartRequest&,PacketBody& out)
+	{
+		out.clear();
+		return true;
+	}
+
+	inline bool Decode(const PacketBody& body,RoomStartRequest&)
+	{
+		return body.empty();
+	}
+
+	//
+	inline bool IsValidRoomState(
+		const RoomStateNotification& packet)
+	{
+		if (packet.RoomId == 0 ||
+			packet.Capacity != ROOM_PLAYER_COUNT ||
+			packet.Players.empty() ||
+			packet.Players.size() > ROOM_PLAYER_COUNT ||
+			packet.HostNickname.empty() ||
+			packet.HostNickname.size() > MAX_NICKNAME_BYTES)
+		{
+			return false;
+		}
+
+		if (packet.Phase != RoomPhase::Waiting &&packet.Phase != RoomPhase::Playing)
+			return false;
+
+		if (packet.Phase == RoomPhase::Playing &&packet.Players.size() != ROOM_PLAYER_COUNT)
+			return false;
+
+		std::unordered_set<std::string> names;
+		bool hostFound = false;
+
+		for (const auto& player : packet.Players)
+		{
+			if (player.Nickname.empty() ||
+				player.Nickname.size() > MAX_NICKNAME_BYTES ||
+				!names.insert(player.Nickname).second)
+			{
+				return false;
+			}
+
+			if (player.Nickname == packet.HostNickname)
+			{
+				hostFound = true;
+
+				if (player.Ready)
+					return false;
+			}
+
+			if (packet.Phase == RoomPhase::Playing &&player.Ready)
+				return false;
+		}
+
+		return hostFound;
+	}
+
+	inline bool Encode(
+		const RoomStateNotification& packet,
+		PacketBody& out)
+	{
+		if (!IsValidRoomState(packet))
+			return false;
+
+		RoomCodecDetail::Writer writer;
+
+		writer.U32(packet.RoomId);
+		writer.U8(static_cast<std::uint8_t>(packet.Phase));
+		writer.U8(packet.Capacity);
+
+		if (!writer.Text8(packet.HostNickname))
+			return false;
+
+		writer.U8(static_cast<std::uint8_t>(packet.Players.size()));
+
+		for (const auto& player : packet.Players)
+		{
+			if (!writer.Text8(player.Nickname))
+			{
+				return false;
+			}
+
+			writer.U8(player.Ready ? 1 : 0);
+		}
+
+		return writer.Finish(out);
+	}
+
+	inline bool Decode(
+		const PacketBody& body,
+		RoomStateNotification& out)
+	{
+		RoomCodecDetail::Reader reader(body);
+		RoomStateNotification decoded;
+
+		UINT8 phase = 0;
+		UINT8 count = 0;
+
+		if (!reader.U32(decoded.RoomId) ||
+			!reader.U8(phase) ||
+			!reader.U8(decoded.Capacity) ||
+			!reader.Text8(decoded.HostNickname) ||
+			!reader.U8(count))
+		{
+			return false;
+		}
+
+		if (count == 0 || count > ROOM_PLAYER_COUNT)
+			return false;
+
+		decoded.Phase = static_cast<RoomPhase>(phase);
+
+		for (UINT8 i = 0; i < count; ++i)
+		{
+			RoomPlayerInfo player;
+			UINT8 ready = 0;
+
+			if (!reader.Text8(player.Nickname) ||
+				!reader.U8(ready) ||
+				ready > 1)
+			{
+				return false;
+			}
+
+			player.Ready = ready != 0;
+			decoded.Players.push_back(std::move(player));
+		}
+
+		if (!reader.Done() || !IsValidRoomState(decoded))
+			return false;
 
 		out = std::move(decoded);
 		return true;

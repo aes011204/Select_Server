@@ -7,12 +7,19 @@ namespace NLogicLib
     NLogicLib::RoomManager::RoomManager(UserManager& users, RoomConfig config)
         : m_users(users), m_config (config)
     {
+        //if (m_config.MaxRooms == 0 ||
+        //    m_config.Capacity == 0 ||
+        //    m_config.Capacity > 255)
+        //{
+        //    throw std::invalid_argument(
+        //        "Invalid room configuration.");
+        //}
+
         if (m_config.MaxRooms == 0 ||
-            m_config.Capacity == 0 ||
-            m_config.Capacity > 255)
+            m_config.Capacity != Protocol::ROOM_PLAYER_COUNT)
         {
             throw std::invalid_argument(
-                "Invalid room configuration.");
+                "Rooms must have exactly two player slots.");
         }
     }
 
@@ -129,6 +136,11 @@ namespace NLogicLib
 
         Room& room = it->second;
 
+        if (room.GetPhase() == Protocol::RoomPhase::Playing)
+        {
+            return RoomResult::GameInProgress;
+        }
+
         if (room.Contains(sessionId))
             return RoomResult::StateMismatch;
 
@@ -181,6 +193,74 @@ namespace NLogicLib
 
         return result;
     }
+    RoomResult RoomManager::SetReady(NServerNetLib::SessionId sessionId, bool ready)
+    {
+        const User* user = m_users.Find(sessionId);
+
+        if (user == nullptr)
+            return RoomResult::UserNotFound;
+
+        if (user->GetState() != UserState::InRoom)
+            return RoomResult::NotInRoom;
+
+        const auto it = m_rooms.find(user->GetRoomId());
+
+        if (it == m_rooms.end() ||!it->second.Contains(sessionId))
+            return RoomResult::StateMismatch;
+        
+        Room& room = it->second;
+
+        if (room.GetPhase() == Protocol::RoomPhase::Playing)
+            return RoomResult::GameInProgress;
+
+        if (room.GetHostSession() == sessionId)
+            return RoomResult::HostCannotReady;
+
+        room.SetReady(sessionId, ready);
+        return RoomResult::Success;
+    }
+
+    RoomResult RoomManager::StartGame(NServerNetLib::SessionId sessionId)
+    {
+        const User* user = m_users.Find(sessionId);
+
+        if (user == nullptr)
+            return RoomResult::UserNotFound;
+
+        if (user->GetState() != UserState::InRoom)
+            return RoomResult::NotInRoom;
+
+        const auto it = m_rooms.find(user->GetRoomId());
+
+        if (it == m_rooms.end() ||!it->second.Contains(sessionId))
+            return RoomResult::StateMismatch;
+
+        Room& room = it->second;
+
+        if (room.GetHostSession() != sessionId)
+            return RoomResult::NotHost;
+
+        if (room.GetPhase() == Protocol::RoomPhase::Playing)
+            return RoomResult::GameAlreadyStarted;
+
+        if (room.GetUserCount() != Protocol::ROOM_PLAYER_COUNT)
+            return RoomResult::NotEnoughPlayers;
+
+        for (auto member : room.GetMembers())
+        {
+            if (member == room.GetHostSession())
+            {
+                continue;
+            }
+
+            if (!room.IsReady(member))
+                return RoomResult::NotAllReady;
+        }
+
+        room.StartGame();
+        return RoomResult::Success;
+    }
+
     bool RoomManager::IsValidTitle(const std::string& title) const
     {
         if (title.empty() ||title.size() > Protocol::MAX_ROOM_TITLE_BYTES)

@@ -3,6 +3,7 @@
 #include <vector>
 #include "../SeverNetLib/NetworkEvent.h"
 #include "RoomTypes.h"
+#include <unordered_set>
 
 namespace NLogicLib
 {
@@ -26,18 +27,34 @@ namespace NLogicLib
 		bool IsEmpty() const { return m_members.empty(); };
 		const std::vector<NServerNetLib::SessionId>& GetMembers() const { return m_members; };
 
+
+		//
+		NServerNetLib::SessionId GetHostSession() const { return m_hostSession; };
+		Protocol::RoomPhase GetPhase() const { return m_phase; };
+		bool IsReady(NServerNetLib::SessionId sessionId) const {
+			return m_readyMembers.find(sessionId) !=
+				m_readyMembers.end();
+		};
 	private:
 		friend class RoomManager;
 		bool RemoveMember(NServerNetLib::SessionId sessionId);
 
 		bool AddMember(NServerNetLib::SessionId sessionId);
 
+		//
+		void SetReady(NServerNetLib::SessionId sessionId,bool ready);
+		void StartGame();
 	private:
 		RoomId m_id;
 		std::string m_title;
 		size_t m_capacity;
 
 		std::vector<NServerNetLib::SessionId> m_members;
+
+		//
+		NServerNetLib::SessionId m_hostSession = 0;
+		Protocol::RoomPhase m_phase =Protocol::RoomPhase::Waiting;
+		std::unordered_set<NServerNetLib::SessionId> m_readyMembers;
 	};
 
 }

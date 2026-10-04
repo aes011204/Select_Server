@@ -70,6 +70,10 @@ namespace NLogicLib
 		void NotifyRoomMember(RoomId roomId,Protocol::RoomMemberChange change,const std::string& nickname);
 		void HandleRoomLeave(const NServerNetLib::NetworkEvent& event);
 
+		//겜 준비
+		void HandleRoomReady(const NServerNetLib::NetworkEvent& event);
+		void HandleRoomStart(const NServerNetLib::NetworkEvent& event);
+		void NotifyRoomState(RoomId roomId);
 	private:
 		std::array<PacketHandler, HANDLER_COUNT> m_handlers{};
 

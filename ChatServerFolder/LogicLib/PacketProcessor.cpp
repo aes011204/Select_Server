@@ -154,6 +154,8 @@ void NLogicLib::PacketProcessor::HandleDisconnected(SessionId sessionId)
 	if (result == RoomResult::Success)
 	{
 		NotifyRoomMember(oldRoomId,Protocol::RoomMemberChange::Disconnected,nickname);
+	
+		NotifyRoomState(oldRoomId);
 	}
 
 	std::cout << "[Logic] Disconnected. Session: " << sessionId << '\n';
@@ -172,6 +174,10 @@ void NLogicLib::PacketProcessor::RegisterHandlers()
 	RegisterHandler(Protocol::ROOM_ENTER_REQ, [this](const Event& event) { HandleRoomEnter(event); });
 
 	RegisterHandler(Protocol::ROOM_LEAVE_REQ, [this](const Event& event) {HandleRoomLeave(event);});
+
+	//겜 준비
+	RegisterHandler(Protocol::ROOM_READY_REQ, [this](const Event& event) {HandleRoomReady(event);});
+	RegisterHandler(Protocol::ROOM_START_REQ, [this](const Event& event) {HandleRoomStart(event);});
 }
 
 void NLogicLib::PacketProcessor::RegisterHandler(UINT16 packetId, PacketHandler handler)
@@ -289,6 +295,7 @@ void NLogicLib::PacketProcessor::HandleRoomCreate(const NServerNetLib::NetworkEv
 	const std::string nickname = user->Nickname;
 
 	NotifyRoomMember(roomId, Protocol::RoomMemberChange::Joined, nickname);
+	NotifyRoomState(roomId);
 }
 
 void NLogicLib::PacketProcessor::HandleRoomList(const NServerNetLib::NetworkEvent& event)
@@ -353,6 +360,8 @@ void NLogicLib::PacketProcessor::HandleRoomEnter(const NServerNetLib::NetworkEve
 	const std::string nickname = user->Nickname;
 
 	NotifyRoomMember(request.RoomId, Protocol::RoomMemberChange::Joined, nickname);
+
+	NotifyRoomState(request.RoomId);
 }
 
 bool NLogicLib::PacketProcessor::SendRoomActionResult(SessionId sessionId, UINT16 responseId, Protocol::RoomResult result, UINT32 roomId)
@@ -449,6 +458,139 @@ void NLogicLib::PacketProcessor::HandleRoomLeave(const NServerNetLib::NetworkEve
 	if (result == RoomResult::Success)
 	{
 		NotifyRoomMember(oldRoomId, Protocol::RoomMemberChange::Left, nickname);
+	
+		NotifyRoomState(oldRoomId);
+	}
+}
+
+void NLogicLib::PacketProcessor::HandleRoomReady(const NServerNetLib::NetworkEvent& event)
+{
+	Protocol::RoomReadyRequest request;
+
+	if (!Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
+
+	const auto result = m_rooms.SetReady(event.Session, request.Ready);
+
+	RoomId roomId = INVALID_ROOM_ID;
+
+	if (result == RoomResult::Success)
+	{
+		const User* user = m_users.Find(event.Session);
+		roomId = user->GetRoomId();
+	}
+
+	SendRoomActionResult(
+		event.Session,
+		Protocol::ROOM_READY_RES,
+		result,
+		roomId);
+
+	if (result == RoomResult::Success)
+	{
+		NotifyRoomState(roomId);
+	}
+}
+
+void NLogicLib::PacketProcessor::HandleRoomStart(const NServerNetLib::NetworkEvent& event)
+{
+	Protocol::RoomStartRequest request;
+
+	if (!Protocol::Decode(event.Body, request))
+	{
+		m_network.Disconnect(event.Session);
+		return;
+	}
+
+	const auto result = m_rooms.StartGame(event.Session);
+
+	RoomId roomId = INVALID_ROOM_ID;
+
+	if (result == RoomResult::Success)
+	{
+		const User* user = m_users.Find(event.Session);
+		roomId = user->GetRoomId();
+	}
+
+	SendRoomActionResult(event.Session,Protocol::ROOM_START_RES,result,roomId);
+
+	if (result == RoomResult::Success)
+	{
+		NotifyRoomState(roomId);
+	}
+}
+
+void NLogicLib::PacketProcessor::NotifyRoomState(RoomId roomId)
+{
+	const Room* room = m_rooms.Find(roomId);
+
+	if (room == nullptr)
+		return;
+
+	// 이번 알림 대상은 미리 복사한다.
+	const auto targets = room->GetMembers();
+
+	Protocol::RoomStateNotification notification;
+	notification.RoomId = roomId;
+	notification.Phase = room->GetPhase();
+	notification.Capacity =
+		static_cast<std::uint8_t>(room->GetCapacity());
+
+	const User* host =
+		m_users.Find(room->GetHostSession());
+
+	if (host == nullptr)
+	{
+		std::cerr << "Room host was not found.\n";
+		return;
+	}
+
+	notification.HostNickname = host->Nickname;
+
+	for (SessionId member : targets)
+	{
+		const User* user = m_users.Find(member);
+
+		if (user == nullptr ||
+			user->GetRoomId() != roomId)
+		{
+			std::cerr << "Room member state mismatch.\n";
+			return;
+		}
+
+		Protocol::RoomPlayerInfo player;
+		player.Nickname = user->Nickname;
+		player.Ready = room->IsReady(member);
+
+		notification.Players.push_back(std::move(player));
+	}
+
+	Protocol::PacketBody body;
+
+	if (!Protocol::Encode(notification, body))
+	{
+		std::cerr << "Could not encode room state.\n";
+		return;
+	}
+
+	for (SessionId target : targets)
+	{
+		if (!m_network.IsConnected(target))
+		{
+			continue;
+		}
+
+		if (!m_network.SendPacket(
+			target,
+			Protocol::ROOM_STATE_NTF,
+			body.data(),
+			body.size()))
+		{
+			m_network.Disconnect(target);
+		}
 	}
 }
 
