@@ -47,10 +47,12 @@ namespace NLogicLib
         throw std::logic_error("Unknown internal game status");
     }
 
-    bool PacketProcessor::SendGameMoveResult(SessionId sessionId,Protocol::GameMoveResult result)
+    bool PacketProcessor::SendGameMoveResult(SessionId sessionId,Protocol::GameMoveResult result, Protocol::GameId gameId)
     {
         Protocol::GameMoveResponse response;
         response.Result = result;
+
+        response.Game = gameId;
 
         Protocol::PacketBody body;
 
@@ -80,7 +82,9 @@ namespace NLogicLib
 
         Protocol::GameResignResponse response;
 
-        response.Result = m_rooms.Resign( event.Session, request.RoomId);
+        response.Result = m_rooms.Resign( event.Session, request.RoomId, request.Game);
+        response.Game = request.Game;
+
 
         Protocol::PacketBody body;
 
@@ -103,6 +107,8 @@ namespace NLogicLib
             notification.Reason = finished.Reason;
 
             notification.MoveCount =static_cast<UINT32>(finished.MoveCount);
+
+            notification.Game = finished.Game;
 
             Protocol::PacketBody body;
 
@@ -147,11 +153,11 @@ namespace NLogicLib
 
         AcceptedMove accepted;
 
-        const auto result = m_rooms.PlaceStone(event.Session, request.RoomId, request.X, request.Y, accepted);
+        const auto result = m_rooms.PlaceStone(event.Session, request.RoomId, request.Game, request.X, request.Y, accepted);
 
         if (result != Protocol::GameMoveResult::Success)
         {
-            SendGameMoveResult(event.Session, result);
+            SendGameMoveResult(event.Session, result, request.Game);
             return;
         }
 
@@ -178,6 +184,8 @@ namespace NLogicLib
 
         notification.MoveCount = static_cast<UINT32>(accepted.MoveCount);
 
+        notification.Game = accepted.Game;
+
         Protocol::PacketBody body;
 
         if (!Protocol::Encode(notification, body))
@@ -195,7 +203,7 @@ namespace NLogicLib
         }
 
         // 착수는 이미 서버 보드에 반영되었다.
-        SendGameMoveResult(event.Session,Protocol::GameMoveResult::Success);
+        SendGameMoveResult(event.Session,Protocol::GameMoveResult::Success, request.Game);
 
         for (SessionId target : targets)
         {

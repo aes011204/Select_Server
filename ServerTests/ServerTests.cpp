@@ -581,6 +581,8 @@ void TestReadyAndStartRules()
         room->GetPhase() == Protocol::RoomPhase::Playing,
         "Room should be playing");
 
+    const auto gameId = room->GetGameId();
+
 
     Check(
         room->GetGame().GetStatus() ==
@@ -614,12 +616,12 @@ void TestReadyAndStartRules()
     NLogicLib::AcceptedMove accepted;
 
     Check(
-        rooms.PlaceStone(2, roomId, 7, 7, accepted) ==
+        rooms.PlaceStone(2, roomId, gameId, 7, 7, accepted) ==
         Protocol::GameMoveResult::NotYourTurn,
         "White must not move first");
 
     Check(
-        rooms.PlaceStone(1, roomId, 7, 7, accepted) ==
+        rooms.PlaceStone(1, roomId, gameId, 7, 7, accepted) ==
         Protocol::GameMoveResult::Success,
         "Black move should succeed");
 
@@ -630,22 +632,22 @@ void TestReadyAndStartRules()
         "Accepted move data is incorrect");
 
     Check(
-        rooms.PlaceStone(2, roomId, 7, 7, accepted) ==
+        rooms.PlaceStone(2, roomId, gameId, 7, 7, accepted) ==
         Protocol::GameMoveResult::Occupied,
         "Occupied position must be rejected");
 
     Check(
-        rooms.PlaceStone(2, roomId, 15, 0, accepted) ==
+        rooms.PlaceStone(2, roomId, gameId, 15, 0, accepted) ==
         Protocol::GameMoveResult::OutOfBounds,
         "Server must reject invalid coordinates");
 
     Check(
-        rooms.PlaceStone(2, roomId + 100, 7, 8, accepted) ==
+        rooms.PlaceStone(2, roomId + 100, gameId, 7, 8, accepted) ==
         Protocol::GameMoveResult::WrongRoom,
         "Request must match the actual room");
 
     Check(
-        rooms.PlaceStone(2, roomId, 7, 8, accepted) ==
+        rooms.PlaceStone(2, roomId, gameId, 7, 8, accepted) ==
         Protocol::GameMoveResult::Success,
         "White should still be able to move after rejections");
 
@@ -952,13 +954,15 @@ void TestTurnTimeout()
         rooms.StartGame(1, t0) == RoomResult::Success,
         "Game start failed");
 
+    const auto gameId = rooms.Find(roomId)->GetGameId();
+
     AcceptedMove accepted;
 
     // 백의 잘못된 요청은 시간을 연장하지 않아야 한다.
     Check(
         rooms.PlaceStone(
             2,
-            roomId,
+            roomId, gameId,
             7,
             7,
             accepted,
@@ -995,6 +999,189 @@ void TestTurnTimeout()
     Check(
         !rooms.TryPopFinishedGame(finished),
         "Game must finish only once");
+}
+
+void TestOldGameRequestRejected()
+{
+    using namespace NLogicLib;
+
+    UserManager users;
+    RoomManager rooms(users);
+
+    Check(
+        users.Login(1, "Kim") == Protocol::LoginResult::Success,
+        "Kim login failed");
+
+    Check(
+        users.Login(2, "Lee") == Protocol::LoginResult::Success,
+        "Lee login failed");
+
+    RoomId roomId = 0;
+
+    Check(
+        rooms.CreateRoom(1, "Game Room", roomId) ==
+        RoomResult::Success,
+        "Room creation failed");
+
+    Check(
+        rooms.EnterRoom(2, roomId) == RoomResult::Success,
+        "Room entry failed");
+
+    Check(
+        rooms.SetReady(2, true) == RoomResult::Success,
+        "Ready failed");
+
+    const GameClock::time_point t0{};
+
+    Check(
+        rooms.StartGame(1, t0) == RoomResult::Success,
+        "First game start failed");
+
+    const auto firstGame =
+        rooms.Find(roomId)->GetGameId();
+
+    Check(
+        rooms.Resign(
+            2,
+            roomId,
+            firstGame,
+            t0 + std::chrono::seconds{ 1 }) ==
+        Protocol::GameMoveResult::Success,
+        "Resignation failed");
+
+    FinishedGame finished;
+
+    Check(
+        rooms.TryPopFinishedGame(finished),
+        "First game should have a result");
+
+    Check(
+        rooms.SetReady(2, true) == RoomResult::Success,
+        "Second ready failed");
+
+    Check(
+        rooms.StartGame(
+            1,
+            t0 + std::chrono::seconds{ 2 }) ==
+        RoomResult::Success,
+        "Second game start failed");
+
+    const auto secondGame =
+        rooms.Find(roomId)->GetGameId();
+
+    Check(
+        secondGame != firstGame,
+        "Rematch must receive a new game ID");
+
+    AcceptedMove accepted;
+
+    Check(
+        rooms.PlaceStone(
+            1,
+            roomId,
+            firstGame,
+            7,
+            7,
+            accepted,
+            t0 + std::chrono::seconds{ 3 }) ==
+        Protocol::GameMoveResult::StaleGame,
+        "Old game move must be rejected");
+
+    const auto& game = rooms.Find(roomId)->GetGame();
+
+    Check(
+        game.GetMoveCount() == 0 &&
+        game.GetStone(7, 7) == Stone::Empty &&
+        game.GetNextTurn() == Stone::Black,
+        "Old request must not change the new game");
+
+    Check(
+        rooms.PlaceStone(
+            1,
+            roomId,
+            secondGame,
+            7,
+            7,
+            accepted,
+            t0 + std::chrono::seconds{ 3 }) ==
+        Protocol::GameMoveResult::Success,
+        "Current game move should succeed");
+}
+void TestDisconnectEndsGame()
+{
+    using namespace NLogicLib;
+
+    UserManager users;
+    RoomManager rooms(users);
+
+    Check(
+        users.Login(1, "Kim") == Protocol::LoginResult::Success,
+        "Kim login failed");
+
+    Check(
+        users.Login(2, "Lee") == Protocol::LoginResult::Success,
+        "Lee login failed");
+
+    RoomId roomId = 0;
+
+    Check(
+        rooms.CreateRoom(1, "Disconnect Room", roomId) ==
+        RoomResult::Success,
+        "Room creation failed");
+
+    Check(
+        rooms.EnterRoom(2, roomId) == RoomResult::Success,
+        "Room entry failed");
+
+    Check(
+        rooms.SetReady(2, true) == RoomResult::Success,
+        "Ready failed");
+
+    const GameClock::time_point t0{};
+
+    Check(
+        rooms.StartGame(1, t0) == RoomResult::Success,
+        "Game start failed");
+
+    const auto gameId =
+        rooms.Find(roomId)->GetGameId();
+
+    Check(
+        rooms.LeaveRoom(
+            1,
+            Protocol::GameEndReason::Disconnected,
+            t0 + std::chrono::seconds{ 1 }) ==
+        RoomResult::Success,
+        "Disconnect cleanup failed");
+
+    users.Remove(1);
+
+    FinishedGame finished;
+
+    Check(
+        rooms.TryPopFinishedGame(finished),
+        "Disconnect should produce a result");
+
+    Check(
+        finished.Game == gameId &&
+        finished.Status == GameStatus::WhiteWon &&
+        finished.Reason ==
+        Protocol::GameEndReason::Disconnected,
+        "Wrong disconnect result");
+
+    const Room* room = rooms.Find(roomId);
+
+    Check(room != nullptr, "Room should remain for the other player");
+
+    Check(
+        room->GetHostSession() == 2 &&
+        room->GetUserCount() == 1 &&
+        room->GetPhase() == Protocol::RoomPhase::Waiting,
+        "Remaining player should become host in waiting room");
+
+    Check(
+        !rooms.TryPopFinishedGame(finished),
+        "Result must be generated only once");
 }
 int main()
 {
@@ -1049,6 +1236,13 @@ int main()
     {
         ++failed;
     }
+
+
+    if (!RunTest("Old game request", TestOldGameRequestRejected))
+        ++failed;
+
+    if (!RunTest("Disconnect ends game", TestDisconnectEndsGame))
+        ++failed;
 
     std::cout
         << "Failed tests: "

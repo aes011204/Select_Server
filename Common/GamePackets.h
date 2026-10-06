@@ -5,7 +5,7 @@
 namespace Protocol
 {
     constexpr std::size_t GAME_BOARD_SIZE = 15;
-
+    using GameId = std::uint32_t;
 
     //클라가 서버의 LogicLib에 의존하지 않도록 하기 위해 각각
     enum class GameStone : UINT8
@@ -37,12 +37,14 @@ namespace Protocol
         NotYourTurn = 6,
         Occupied = 7,
 
-        StateMismatch = 8
+        StateMismatch = 8,
+        StaleGame = 9
     };
 
     struct GameMoveRequest
     {
         UINT32 RoomId = 0;
+        GameId Game = 0;
         UINT8 X = 0;
         UINT8 Y = 0;
     };
@@ -50,11 +52,13 @@ namespace Protocol
     struct GameMoveResponse
     {
         GameMoveResult Result = GameMoveResult::Success;
+        GameId Game = 0;
     };
 
     struct GameMoveNotification
     {
         UINT32 RoomId = 0;
+        GameId Game = 0;
 
         UINT8 X = 0;
         UINT8 Y = 0;
@@ -72,20 +76,24 @@ namespace Protocol
         FiveInRow = 1,
         BoardFull = 2,
         Resigned = 3,
-        TurnTimeout = 4
+        TurnTimeout = 4,
+        LeftRoom = 5,
+        Disconnected = 6
     };
 
     struct GameResignRequest
     {
         UINT32 RoomId = 0;
+        GameId Game = 0;
     };
 
-    // 결과 1바이트라는 기존 본문 형식을 재사용
+    // 결과 1바이트 + 게임 ID 4바이트 본문 형식을 재사용
     using GameResignResponse = GameMoveResponse;
 
     struct GameEndNotification
     {
         UINT32 RoomId = 0;
+        GameId Game = 0;
 
         GameState State = GameState::NotStarted;
 

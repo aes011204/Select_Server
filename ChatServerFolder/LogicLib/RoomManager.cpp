@@ -72,40 +72,61 @@ namespace NLogicLib
         return RoomResult::Success;
     }
 
-    RoomResult NLogicLib::RoomManager::LeaveRoom(NServerNetLib::SessionId sessionId)
+    RoomResult NLogicLib::RoomManager::LeaveRoom(NServerNetLib::SessionId sessionId,
+        Protocol::GameEndReason reason,
+        GameClock::time_point now)
     {
-        User* user = m_users.FindMutable(sessionId);
+        if (reason != Protocol::GameEndReason::LeftRoom && reason != Protocol::GameEndReason::Disconnected)
+            throw std::invalid_argument( "Invalid reason for leaving a room.");
 
-        if (user == nullptr)
-            return RoomResult::UserNotFound;
+    User* user = m_users.FindMutable(sessionId);
 
-        if (user->GetState() == UserState::Lobby)
-        {
-            if (user->GetRoomId() != INVALID_ROOM_ID)
-            {
-                return RoomResult::StateMismatch;
-            }
-            return RoomResult::NotInRoom;
-        }
+    if (user == nullptr)
+        return RoomResult::UserNotFound;
 
-        const RoomId roomId = user->GetRoomId();
-        const auto roomIt = m_rooms.find(roomId);
-
-        if (roomIt == m_rooms.end())
+    if (user->GetState() == UserState::Lobby)
+    {
+        if (user->GetRoomId() != INVALID_ROOM_ID)
             return RoomResult::StateMismatch;
 
-        Room& room = roomIt->second;
-
-        if (!room.RemoveMember(sessionId))
-            return RoomResult::StateMismatch;
-
-        user->ReturnToLobby();
-
-        if (room.IsEmpty())
-            m_rooms.erase(roomIt);
-
-        return RoomResult::Success;
+        return RoomResult::NotInRoom;
     }
+
+    const RoomId roomId = user->GetRoomId();
+    const auto roomIt = m_rooms.find(roomId);
+
+    if (roomIt == m_rooms.end())
+        return RoomResult::StateMismatch;
+
+    Room& room = roomIt->second;
+
+    if (!room.Contains(sessionId))
+        return RoomResult::StateMismatch;
+
+    // 이미 제한 시간을 넘었으면 시간 초과 결과가 먼저 확정된다.
+    ExpireRoom(room, now);
+
+    if (room.GetPhase() == Protocol::RoomPhase::Playing)
+    {
+        const Stone loser = room.GetPlayerStone(sessionId);
+
+        if (!room.Forfeit(loser))
+            return RoomResult::StateMismatch;
+
+        // 참가자 제거 전에 결과와 전달 대상을 보관한다.
+        FinishRoom(room, reason);
+    }
+
+    if (!room.RemoveMember(sessionId))
+        return RoomResult::StateMismatch;
+
+    user->ReturnToLobby();
+
+    if (room.IsEmpty())
+        m_rooms.erase(roomIt);
+
+    return RoomResult::Success;
+}
 
     const Room* NLogicLib::RoomManager::Find(RoomId roomId) const
     {
@@ -278,11 +299,19 @@ namespace NLogicLib
                 return RoomResult::NotAllReady;
         }
 
-        room.StartGame(now);
+        if (m_lastGameId ==(std::numeric_limits<Protocol::GameId>::max)())
+            return RoomResult::GameIdExhausted;
+
+        const Protocol::GameId newGameId = m_lastGameId + 1;
+
+        room.StartGame(newGameId, now);
+
+        m_lastGameId = newGameId;
+
         return RoomResult::Success;
     }
 
-    Protocol::GameMoveResult RoomManager::PlaceStone(NServerNetLib::SessionId sessionId, RoomId requestedRoomId, int x, int y, AcceptedMove& out, GameClock::time_point now)
+    Protocol::GameMoveResult RoomManager::PlaceStone(NServerNetLib::SessionId sessionId, RoomId requestedRoomId,Protocol::GameId requestedGameId, int x, int y, AcceptedMove& out, GameClock::time_point now)
     {
         using Result = Protocol::GameMoveResult;
 
@@ -304,6 +333,12 @@ namespace NLogicLib
 
         Room& room = it->second;
 
+        if (requestedGameId == 0 || requestedGameId != room.GetGameId())
+            return Protocol::GameMoveResult::StaleGame;
+
+        if (ExpireRoom(room, now))
+            return Protocol::GameMoveResult::GameNotRunning;
+        
         if (ExpireRoom(room, now))
             return Protocol::GameMoveResult::GameNotRunning;
 
@@ -344,6 +379,8 @@ namespace NLogicLib
         accepted.NextTurn = room.GetGame().GetNextTurn();
         accepted.Status = room.GetGame().GetStatus();
         accepted.MoveCount = room.GetGame().GetMoveCount();
+
+        accepted.Game = room.GetGameId();
 
         out = accepted;
 
@@ -409,6 +446,8 @@ namespace NLogicLib
         finished.MoveCount = room.GetGame().GetMoveCount();
         finished.Targets = room.GetMembers();
 
+        finished.Game = room.GetGameId();
+
         m_finishedGames.push_back(std::move(finished));
 
         room.FinishGame();
@@ -431,7 +470,7 @@ namespace NLogicLib
 
     Protocol::GameMoveResult NLogicLib::RoomManager::Resign(
         NServerNetLib::SessionId sessionId,
-        RoomId requestedRoomId,
+        RoomId requestedRoomId, Protocol::GameId requestedGameId,
         GameClock::time_point now)
     {
         using Result = Protocol::GameMoveResult;
@@ -457,10 +496,15 @@ namespace NLogicLib
 
         Room& room = it->second;
 
-        // 이미 제한 시간을 넘었다면 시간 초과가 먼저 확정된다.
+        if (requestedGameId == 0 ||
+            requestedGameId != room.GetGameId())
+        {
+            return Protocol::GameMoveResult::StaleGame;
+        }
+
         if (ExpireRoom(room, now))
         {
-            return Result::GameNotRunning;
+            return Protocol::GameMoveResult::GameNotRunning;
         }
 
         if (room.GetPhase() != Protocol::RoomPhase::Playing ||

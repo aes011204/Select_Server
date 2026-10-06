@@ -325,6 +325,7 @@ bool ProcessCommand(TcpClient& client, const std::string& command, ClientGameVie
 
 		Protocol::GameMoveRequest request;
 		request.RoomId = game.RoomId;
+		request.Game = game.Game;
 		request.X = static_cast<std::uint8_t>(x);
 		request.Y = static_cast<std::uint8_t>(y);
 
@@ -353,6 +354,7 @@ bool ProcessCommand(TcpClient& client, const std::string& command, ClientGameVie
 
 		Protocol::GameResignRequest request;
 		request.RoomId = game.RoomId;
+		request.Game = game.Game;
 
 		Protocol::PacketBody body;
 
@@ -651,6 +653,12 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 		const bool nowPlaying =
 			notification.Phase == Protocol::RoomPhase::Playing;
 
+		const bool sameRoom =
+			game.RoomId == notification.RoomId;
+
+		const bool sameGame =
+			sameRoom && game.Game == notification.Game;
+
 		const bool hasFinalResult =
 			game.State == Protocol::GameState::BlackWon ||
 			game.State == Protocol::GameState::WhiteWon ||
@@ -658,22 +666,31 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 
 		if (!nowPlaying)
 		{
-			if (game.RoomId == notification.RoomId &&
-				hasFinalResult)
+			if (sameGame && hasFinalResult)
 			{
-				// 결과와 마지막 보드는 유지하고, 방은 대기 상태로 표시.
+				// 동일한 판의 최종 보드는 남겨둔다.
 				game.RoomPlaying = false;
 			}
 			else
 			{
 				game.Reset(notification.RoomId);
+				game.Game = notification.Game;
 			}
 		}
-		else if (game.RoomId != notification.RoomId ||
-			!game.RoomPlaying)
+		else if (!sameGame)
 		{
-			game.Begin(notification.RoomId);
+			// 방이 같아도 GameId가 다르면 새로운 판이다.
+			game.Begin(
+				notification.RoomId,
+				notification.Game);
+
 			game.Print();
+		}
+		else if (!game.RoomPlaying)
+		{
+			std::cerr
+				<< "Finished game unexpectedly returned to playing.\n";
+			return false;
 		}
 
 
@@ -724,6 +741,12 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 			return false;
 		}
 
+		if (response.Game != game.Game)
+		{
+			std::cout << "[Game] Ignored response for an old game.\n";
+			return true;
+		}
+
 		if (response.Result != Protocol::GameMoveResult::Success)
 		{
 			std::cout
@@ -743,6 +766,13 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 		{
 			std::cerr << "Invalid move notification.\n";
 			return false;
+		}
+
+		if (notification.RoomId != game.RoomId ||
+			notification.Game != game.Game)
+		{
+			std::cout << "[Game] Ignored move from another game.\n";
+			return true;
 		}
 
 		if (!game.Apply(notification))
@@ -776,6 +806,12 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 			return false;
 		}
 
+		if (response.Game != game.Game)
+		{
+			std::cout << "[Game] Ignored response for an old game.\n";
+			return true;
+		}
+
 		if (response.Result != Protocol::GameMoveResult::Success)
 		{
 			std::cout
@@ -797,8 +833,16 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 			return false;
 		}
 
+		// 다른 판의 알림이면 무시
 		if (notification.RoomId != game.RoomId ||
-			!game.RoomPlaying ||
+			notification.Game != game.Game)
+		{
+			std::cout << "[Game] Ignored result from another game.\n";
+			return true;
+		}
+
+		// 현재 판인데 상태가 맞지 않으면 오류
+		if (!game.RoomPlaying ||
 			notification.MoveCount != game.MoveCount)
 		{
 			std::cerr << "Game end state is out of sync.\n";
@@ -907,6 +951,7 @@ const char* RoomResultText(Protocol::RoomResult result)
 	case R::NotAllReady:		return "The other player is not ready";
 	case R::GameAlreadyStarted:	return "Game already started";
 	case R::GameInProgress:		return "Game is in progress";
+	case R::GameIdExhausted:  return "Game ID exhausted";
 	}
 
 	return "Unknown result";
@@ -927,6 +972,8 @@ const char* MoveResultText(Protocol::GameMoveResult result)
 	case R::NotYourTurn:    return "Not your turn";
 	case R::Occupied:       return "Position is already occupied";
 	case R::StateMismatch:  return "Server state mismatch";
+	case R::StaleGame:		return "Request belongs to an old or invalid game";
+
 	}
 
 	return "Unknown result";
@@ -947,6 +994,12 @@ const char* GameEndReasonText(Protocol::GameEndReason reason)
 
 	case Protocol::GameEndReason::TurnTimeout:
 		return "Turn timeout";
+
+	case Protocol::GameEndReason::LeftRoom:
+		return "A player left the room";
+
+	case Protocol::GameEndReason::Disconnected:
+		return "Player disconnected";
 	}
 
 	return "Unknown reason";

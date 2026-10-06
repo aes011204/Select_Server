@@ -115,7 +115,7 @@ namespace Protocol
 			UINT8 value = 0;
 
 			if (!reader.U8(value) ||
-				value > static_cast<UINT8>(RoomResult::GameInProgress))
+				value > static_cast<UINT8>(RoomResult::GameIdExhausted))
 			{
 				return false;
 			}
@@ -470,6 +470,11 @@ namespace Protocol
 		if (packet.Phase == RoomPhase::Playing &&packet.Players.size() != ROOM_PLAYER_COUNT)
 			return false;
 
+		if (packet.Phase == RoomPhase::Playing && packet.Game == 0)
+		{
+			return false;
+		}
+
 		std::unordered_set<std::string> names;
 		bool hostFound = false;
 
@@ -507,6 +512,7 @@ namespace Protocol
 		RoomCodecDetail::Writer writer;
 
 		writer.U32(packet.RoomId);
+		writer.U32(packet.Game);
 		writer.U8(static_cast<std::uint8_t>(packet.Phase));
 		writer.U8(packet.Capacity);
 
@@ -539,6 +545,7 @@ namespace Protocol
 		UINT8 count = 0;
 
 		if (!reader.U32(decoded.RoomId) ||
+			!reader.U32(decoded.Game) ||
 			!reader.U8(phase) ||
 			!reader.U8(decoded.Capacity) ||
 			!reader.Text8(decoded.HostNickname) ||

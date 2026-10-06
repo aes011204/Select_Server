@@ -31,7 +31,8 @@ namespace Protocol
         NotEnoughPlayers = 13,
         NotAllReady = 14,
         GameAlreadyStarted = 15,
-        GameInProgress = 16
+        GameInProgress = 16,
+        GameIdExhausted = 17
     };
 
 
@@ -121,6 +122,7 @@ namespace Protocol
     struct RoomStateNotification
     {
         UINT32 RoomId = 0;
+        UINT32 Game = 0;
 
         RoomPhase Phase = RoomPhase::Waiting;
         UINT8 Capacity = 2;

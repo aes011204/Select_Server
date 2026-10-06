@@ -144,7 +144,7 @@ void NLogicLib::PacketProcessor::HandleDisconnected(SessionId sessionId)
 	const RoomId oldRoomId = user->GetRoomId();
 	const std::string nickname = user->Nickname;
 	// 방정리가 사용자제거보다 우선
-	const auto result = m_rooms.LeaveRoom(sessionId);
+	const auto result = m_rooms.LeaveRoom(sessionId, Protocol::GameEndReason::Disconnected);
 
 	if (result != RoomResult::Success && result != RoomResult::NotInRoom)
 	{
@@ -157,6 +157,8 @@ void NLogicLib::PacketProcessor::HandleDisconnected(SessionId sessionId)
 
 	m_users.Remove(sessionId);
 
+	// 사용자 삭제 후에도 종료 기록에는 필요한 값이 남아 있다.
+	FlushFinishedGames();
 
 	if (result == RoomResult::Success)
 	{
@@ -465,6 +467,8 @@ void NLogicLib::PacketProcessor::HandleRoomLeave(const NServerNetLib::NetworkEve
 
 	const auto result = m_rooms.LeaveRoom(event.Session);
 
+	FlushFinishedGames();
+
 	SendRoomActionResult(event.Session, Protocol::ROOM_LEAVE_RES, result, oldRoomId);
 
 	if (result == RoomResult::Success)
@@ -578,6 +582,7 @@ void NLogicLib::PacketProcessor::NotifyRoomState(RoomId roomId)
 		player.Ready = room->IsReady(member);
 
 		notification.Players.push_back(std::move(player));
+		notification.Game = room->GetGameId();
 	}
 
 	Protocol::PacketBody body;

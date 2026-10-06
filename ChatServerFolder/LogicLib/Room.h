@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include "../SeverNetLib/NetworkEvent.h"
+#include "../../Common/GamePackets.h"
 #include "RoomTypes.h"
 #include "OmokGame.h"
 #include <unordered_set>
@@ -39,6 +40,7 @@ namespace NLogicLib
 		Stone GetPlayerStone(NServerNetLib::SessionId sessionId) const;
 
 		bool IsTurnExpired(GameClock::time_point now) const;
+		Protocol::GameId GetGameId() const { return m_gameId; };
 	private:
 		friend class RoomManager;
 		bool RemoveMember(NServerNetLib::SessionId sessionId);
@@ -47,7 +49,7 @@ namespace NLogicLib
 
 		//
 		void SetReady(NServerNetLib::SessionId sessionId,bool ready);
-		void StartGame(GameClock::time_point now);
+		void StartGame(Protocol::GameId gameId,GameClock::time_point now);
 
 		MoveResult PlaceStone(NServerNetLib::SessionId sessionId,int x,int y, GameClock::time_point now);
 
@@ -71,6 +73,8 @@ namespace NLogicLib
 
 		std::chrono::seconds m_turnTime{ 30 };
 		GameClock::time_point m_turnDeadline{};
+
+		Protocol::GameId m_gameId = 0;
 	};
 
 }

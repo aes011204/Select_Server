@@ -12,6 +12,7 @@ namespace NLogicLib
 	struct AcceptedMove
 	{
 		RoomId Room = INVALID_ROOM_ID;
+		Protocol::GameId Game = 0;
 
 		int X = 0;
 		int Y = 0;
@@ -26,7 +27,9 @@ namespace NLogicLib
 
 	struct FinishedGame
 	{
+
 		RoomId Room = INVALID_ROOM_ID;
+		Protocol::GameId Game = 0;
 
 		GameStatus Status = GameStatus::NotStarted;
 
@@ -46,7 +49,10 @@ namespace NLogicLib
 
 	public:
 		RoomResult CreateRoom(NServerNetLib::SessionId sessionId,const std::string& title,RoomId& outRoomId);
-		RoomResult LeaveRoom(NServerNetLib::SessionId sessionId);
+		RoomResult LeaveRoom(NServerNetLib::SessionId sessionId,
+			Protocol::GameEndReason reason =
+			Protocol::GameEndReason::LeftRoom,
+			GameClock::time_point now = GameClock::now());
 		const Room* Find(RoomId roomId) const;
 
 		std::size_t GetRoomCount() const { return m_rooms.size(); };
@@ -59,8 +65,8 @@ namespace NLogicLib
 		RoomResult SetReady(NServerNetLib::SessionId sessionId,bool ready);
 		RoomResult StartGame(NServerNetLib::SessionId sessionId, GameClock::time_point now = GameClock::now());
 
-		Protocol::GameMoveResult PlaceStone(NServerNetLib::SessionId sessionId,RoomId requestedRoomId,int x,int y,AcceptedMove& out, GameClock::time_point now = GameClock::now());
-		Protocol::GameMoveResult Resign(NServerNetLib::SessionId sessionId,RoomId requestedRoomId,GameClock::time_point now = GameClock::now());
+		Protocol::GameMoveResult PlaceStone(NServerNetLib::SessionId sessionId,RoomId requestedRoomId, Protocol::GameId requestedGameId, int x,int y,AcceptedMove& out, GameClock::time_point now = GameClock::now());
+		Protocol::GameMoveResult Resign(NServerNetLib::SessionId sessionId,RoomId requestedRoomId, Protocol::GameId requestedGameId,GameClock::time_point now = GameClock::now());
 		void UpdateTimeouts(GameClock::time_point now = GameClock::now());
 		bool TryPopFinishedGame(FinishedGame& out);
 	private:
@@ -77,6 +83,8 @@ namespace NLogicLib
 		RoomId m_lastRoomId = INVALID_ROOM_ID;
 
 		std::deque<FinishedGame> m_finishedGames;
+
+		Protocol::GameId m_lastGameId = 0;
 	};
 
 }

@@ -10,6 +10,7 @@ namespace Protocol
         RoomCodecDetail::Writer writer;
 
         writer.U32(packet.RoomId);
+        writer.U32(packet.Game);
         writer.U8(packet.X);
         writer.U8(packet.Y);
 
@@ -22,6 +23,7 @@ namespace Protocol
         GameMoveRequest decoded;
 
         if (!reader.U32(decoded.RoomId) ||
+            !reader.U32(decoded.Game) ||
             !reader.U8(decoded.X) ||
             !reader.U8(decoded.Y) ||
             !reader.Done())
@@ -37,6 +39,7 @@ namespace Protocol
     {
         RoomCodecDetail::Writer writer;
         writer.U8(static_cast<UINT8>(packet.Result));
+        writer.U32(packet.Game);
 
         return writer.Finish(out);
     }
@@ -44,16 +47,19 @@ namespace Protocol
     inline bool Decode(const PacketBody& body,GameMoveResponse& out)
     {
         RoomCodecDetail::Reader reader(body);
+        GameMoveResponse decoded;
         UINT8 result = 0;
 
         if (!reader.U8(result) ||
-            result > static_cast<UINT8>(GameMoveResult::StateMismatch) ||
+            result > static_cast<UINT8>(GameMoveResult::StaleGame) ||
+            !reader.U32(decoded.Game) ||
             !reader.Done())
         {
             return false;
         }
 
-        out.Result = static_cast<GameMoveResult>(result);
+        decoded.Result = static_cast<GameMoveResult>(result);
+        out = decoded;
         return true;
     }
 
@@ -61,6 +67,7 @@ namespace Protocol
         const GameMoveNotification& packet)
     {
         if (packet.RoomId == 0 ||
+            packet.Game == 0 ||
             packet.X >= GAME_BOARD_SIZE ||
             packet.Y >= GAME_BOARD_SIZE ||
             packet.MoveCount == 0 ||
@@ -116,6 +123,7 @@ namespace Protocol
         RoomCodecDetail::Writer writer;
 
         writer.U32(packet.RoomId);
+        writer.U32(packet.Game);
         writer.U8(packet.X);
         writer.U8(packet.Y);
 
@@ -143,6 +151,7 @@ namespace Protocol
         UINT8 state = 0;
 
         if (!reader.U32(decoded.RoomId) ||
+            !reader.U32(decoded.Game) ||
             !reader.U8(decoded.X) ||
             !reader.U8(decoded.Y) ||
             !reader.U8(placed) ||
@@ -174,6 +183,7 @@ namespace Protocol
     {
         RoomCodecDetail::Writer writer;
         writer.U32(packet.RoomId);
+        writer.U32(packet.Game);
         return writer.Finish(out);
     }
 
@@ -184,7 +194,8 @@ namespace Protocol
         RoomCodecDetail::Reader reader(body);
         GameResignRequest decoded;
 
-        if (!reader.U32(decoded.RoomId) || !reader.Done())
+        if (!reader.U32(decoded.RoomId) ||
+            !reader.U32(decoded.Game) || !reader.Done())
         {
             return false;
         }
@@ -197,6 +208,7 @@ namespace Protocol
         const GameEndNotification& packet)
     {
         if (packet.RoomId == 0 ||
+            packet.Game == 0 ||
             packet.MoveCount >
             GAME_BOARD_SIZE * GAME_BOARD_SIZE)
         {
@@ -219,6 +231,8 @@ namespace Protocol
 
         case GameEndReason::Resigned:
         case GameEndReason::TurnTimeout:
+        case GameEndReason::LeftRoom:
+        case GameEndReason::Disconnected:
             return hasWinner;
 
         default:
@@ -238,6 +252,7 @@ namespace Protocol
         RoomCodecDetail::Writer writer;
 
         writer.U32(packet.RoomId);
+        writer.U32(packet.Game);
         writer.U8(static_cast<std::uint8_t>(packet.State));
         writer.U8(static_cast<std::uint8_t>(packet.Reason));
         writer.U32(packet.MoveCount);
@@ -256,6 +271,7 @@ namespace Protocol
         std::uint8_t reason = 0;
 
         if (!reader.U32(decoded.RoomId) ||
+            !reader.U32(decoded.Game) ||
             !reader.U8(state) ||
             !reader.U8(reason) ||
             !reader.U32(decoded.MoveCount) ||

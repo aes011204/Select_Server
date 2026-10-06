@@ -107,8 +107,10 @@ namespace NLogicLib
         m_readyMembers.clear();
         m_turnDeadline = GameClock::time_point{};
     }
-    void Room::StartGame(GameClock::time_point now)
+    void Room::StartGame(Protocol::GameId gameId, GameClock::time_point now)
     {
+        m_gameId = gameId;
+
         m_blackPlayer = m_hostSession;
         m_whitePlayer = 0;
 

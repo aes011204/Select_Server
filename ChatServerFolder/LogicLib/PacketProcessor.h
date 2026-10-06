@@ -76,7 +76,7 @@ namespace NLogicLib
 		void NotifyRoomState(RoomId roomId);
 
 		void HandleGameMove(const NServerNetLib::NetworkEvent& event);
-		bool SendGameMoveResult(SessionId sessionId,Protocol::GameMoveResult result);
+		bool SendGameMoveResult(SessionId sessionId,Protocol::GameMoveResult result, Protocol::GameId gameId);
 
 		//겜 결과
 		void HandleGameResign(const NServerNetLib::NetworkEvent& event);

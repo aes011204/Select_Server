@@ -10,6 +10,7 @@
 
 struct ClientGameView
 {
+
     using Board =
         std::array<
         std::array<
@@ -29,6 +30,8 @@ struct ClientGameView
     std::uint32_t MoveCount = 0;
     Board Cells{};
 
+    Protocol::GameId Game = 0;
+
     void Reset(std::uint32_t roomId = 0)
     {
         RoomId = roomId;
@@ -36,6 +39,7 @@ struct ClientGameView
         State = Protocol::GameState::NotStarted;
         NextTurn = Protocol::GameStone::Empty;
         MoveCount = 0;
+        Game = 0;
 
         for (auto& row : Cells)
         {
@@ -43,10 +47,11 @@ struct ClientGameView
         }
     }
 
-    void Begin(std::uint32_t roomId)
+    void Begin(std::uint32_t roomId, Protocol::GameId gameId)
     {
         Reset(roomId);
 
+        Game = gameId;
         RoomPlaying = true;
         State = Protocol::GameState::Playing;
         NextTurn = Protocol::GameStone::Black;
@@ -61,8 +66,8 @@ struct ClientGameView
             packet.Y >= Protocol::GAME_BOARD_SIZE ||
             packet.MoveCount != MoveCount + 1 ||
             packet.PlacedStone != NextTurn ||
-            Cells[packet.Y][packet.X] !=
-            Protocol::GameStone::Empty)
+            Cells[packet.Y][packet.X] !=Protocol::GameStone::Empty||
+            packet.Game != Game)
         {
             return false;
         }
