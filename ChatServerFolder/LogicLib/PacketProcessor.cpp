@@ -19,6 +19,9 @@ NLogicLib::PacketProcessor::PacketProcessor(NServerNetLib::INetwork& network, st
 
 void NLogicLib::PacketProcessor::Update()
 {
+	m_rooms.UpdateTimeouts();
+	FlushFinishedGames();
+
 	NServerNetLib::NetworkEvent event;
 
 	while (m_network.TryPopEvent(event))
@@ -52,6 +55,10 @@ void NLogicLib::PacketProcessor::Update()
 	// 아무 패킷도 보내지 않는 연결도 검사.
 	CheckLoginTimeouts();
 
+	CheckLoginTimeouts();
+
+	m_rooms.UpdateTimeouts();
+	FlushFinishedGames();
 }
 
 
@@ -181,6 +188,8 @@ void NLogicLib::PacketProcessor::RegisterHandlers()
 
 	//겜
 	RegisterHandler(Protocol::GAME_MOVE_REQ,[this](const Event& event){HandleGameMove(event);});
+
+	RegisterHandler(Protocol::GAME_RESIGN_REQ,[this](const Event& event){HandleGameResign(event);});
 }
 
 void NLogicLib::PacketProcessor::RegisterHandler(UINT16 packetId, PacketHandler handler)

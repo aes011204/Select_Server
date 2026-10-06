@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <chrono>
 #include "../../Common/RoomPackets.h"
 namespace NLogicLib
 {
@@ -14,12 +15,17 @@ namespace NLogicLib
         InRoom
     };
 
+    using GameClock = std::chrono::steady_clock;
     struct RoomConfig
     {
         size_t MaxRooms = 100;
         size_t Capacity = 2;
+
+        std::chrono::seconds TurnTime{ 30 };
     };
 
+
+ 
     /*enum class RoomResult
     {
         Success,

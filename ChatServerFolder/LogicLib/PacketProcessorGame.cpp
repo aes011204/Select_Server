@@ -68,6 +68,73 @@ namespace NLogicLib
         return true;
     }
 
+    void PacketProcessor::HandleGameResign(const NServerNetLib::NetworkEvent& event)
+    {
+        Protocol::GameResignRequest request;
+
+        if (!Protocol::Decode(event.Body, request))
+        {
+            m_network.Disconnect(event.Session);
+            return;
+        }
+
+        Protocol::GameResignResponse response;
+
+        response.Result = m_rooms.Resign( event.Session, request.RoomId);
+
+        Protocol::PacketBody body;
+
+        if (!Protocol::Encode(response, body) ||
+            !m_network.SendPacket(event.Session, Protocol::GAME_RESIGN_RES, body.data(), body.size()))
+        {
+            m_network.Disconnect(event.Session);
+        }
+    }
+
+    void PacketProcessor::FlushFinishedGames()
+    {
+        FinishedGame finished;
+
+        while (m_rooms.TryPopFinishedGame(finished))
+        {
+            Protocol::GameEndNotification notification;
+            notification.RoomId = finished.Room;
+            notification.State = ToPacketState(finished.Status);
+            notification.Reason = finished.Reason;
+
+            notification.MoveCount =static_cast<UINT32>(finished.MoveCount);
+
+            Protocol::PacketBody body;
+
+            if (!Protocol::Encode(notification, body))
+            {
+                std::cerr << "Could not encode game result.\n";
+
+                for (SessionId target : finished.Targets)
+                {
+                    m_network.Disconnect(target);
+                }
+
+                continue;
+            }
+
+            for (SessionId target : finished.Targets)
+            {
+                if (!m_network.IsConnected(target))
+                {
+                    continue;
+                }
+
+                if (!m_network.SendPacket(target,Protocol::GAME_END_NTF,body.data(), body.size()))
+                {
+                    m_network.Disconnect(target);
+                }
+            }
+
+            NotifyRoomState(finished.Room);
+        }
+    }
+
     void PacketProcessor::HandleGameMove(const NServerNetLib::NetworkEvent& event)
     {
         Protocol::GameMoveRequest request;

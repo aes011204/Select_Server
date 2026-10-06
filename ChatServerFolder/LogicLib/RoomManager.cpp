@@ -14,12 +14,12 @@ namespace NLogicLib
         //    throw std::invalid_argument(
         //        "Invalid room configuration.");
         //}
-
         if (m_config.MaxRooms == 0 ||
-            m_config.Capacity != Protocol::ROOM_PLAYER_COUNT)
+            m_config.Capacity != Protocol::ROOM_PLAYER_COUNT ||
+            m_config.TurnTime.count() <= 0)
         {
             throw std::invalid_argument(
-                "Rooms must have exactly two player slots.");
+                "Invalid room configuration.");
         }
     }
 
@@ -56,7 +56,7 @@ namespace NLogicLib
 
         const RoomId newRoomId = m_lastRoomId + 1;
 
-        Room room(newRoomId,title, m_config.Capacity, sessionId);
+        Room room(newRoomId,title, m_config.Capacity, sessionId, m_config.TurnTime);
 
         const auto inserted = m_rooms.emplace(newRoomId, std::move(room));
 
@@ -220,7 +220,28 @@ namespace NLogicLib
         return RoomResult::Success;
     }
 
-    RoomResult RoomManager::StartGame(NServerNetLib::SessionId sessionId)
+    
+
+    void RoomManager::UpdateTimeouts(GameClock::time_point now)
+    {
+        for (auto& entry : m_rooms)
+        {
+            ExpireRoom(entry.second, now);
+        }
+    }
+
+    bool RoomManager::TryPopFinishedGame(FinishedGame& out)
+    {
+        if (m_finishedGames.empty())
+            return false;
+
+        out = std::move(m_finishedGames.front());
+        m_finishedGames.pop_front();
+
+        return true;
+    }
+
+    RoomResult RoomManager::StartGame(NServerNetLib::SessionId sessionId, GameClock::time_point now)
     {
         const User* user = m_users.Find(sessionId);
 
@@ -257,11 +278,11 @@ namespace NLogicLib
                 return RoomResult::NotAllReady;
         }
 
-        room.StartGame();
+        room.StartGame(now);
         return RoomResult::Success;
     }
 
-    Protocol::GameMoveResult RoomManager::PlaceStone(NServerNetLib::SessionId sessionId, RoomId requestedRoomId, int x, int y, AcceptedMove& out)
+    Protocol::GameMoveResult RoomManager::PlaceStone(NServerNetLib::SessionId sessionId, RoomId requestedRoomId, int x, int y, AcceptedMove& out, GameClock::time_point now)
     {
         using Result = Protocol::GameMoveResult;
 
@@ -282,9 +303,13 @@ namespace NLogicLib
             return Result::StateMismatch;
 
         Room& room = it->second;
+
+        if (ExpireRoom(room, now))
+            return Protocol::GameMoveResult::GameNotRunning;
+
         const Stone stone = room.GetPlayerStone(sessionId);
 
-        const MoveResult result =room.PlaceStone(sessionId, x, y);
+        const MoveResult result =room.PlaceStone(sessionId, x, y,now);
 
         switch (result)
         {
@@ -321,7 +346,17 @@ namespace NLogicLib
         accepted.MoveCount = room.GetGame().GetMoveCount();
 
         out = accepted;
-        return Result::Success;
+
+        if (accepted.Status == GameStatus::BlackWon || accepted.Status == GameStatus::WhiteWon)
+        {
+            FinishRoom(room,Protocol::GameEndReason::FiveInRow);
+        }
+        else if (accepted.Status == GameStatus::Draw)
+        {
+            FinishRoom(room,Protocol::GameEndReason::BoardFull);
+        }
+
+        return Protocol::GameMoveResult::Success;
     }
 
     bool RoomManager::IsValidTitle(const std::string& title) const
@@ -353,5 +388,98 @@ namespace NLogicLib
             static_cast<int>(title.size()),
             nullptr,
             0) > 0;
+    }
+    void RoomManager::FinishRoom(Room& room, Protocol::GameEndReason reason)
+    {
+        if (room.GetPhase() != Protocol::RoomPhase::Playing)
+            return;
+
+        const auto status = room.GetGame().GetStatus();
+
+        if (status != GameStatus::BlackWon &&status != GameStatus::WhiteWon &&status != GameStatus::Draw)
+        {
+            throw std::logic_error(
+                "Cannot finish a game without a final result.");
+        }
+
+        FinishedGame finished;
+        finished.Room = room.GetId();
+        finished.Status = status;
+        finished.Reason = reason;
+        finished.MoveCount = room.GetGame().GetMoveCount();
+        finished.Targets = room.GetMembers();
+
+        m_finishedGames.push_back(std::move(finished));
+
+        room.FinishGame();
+    }
+
+    bool RoomManager::ExpireRoom(Room& room, GameClock::time_point now)
+    {
+        if (!room.IsTurnExpired(now))
+            return false;
+
+        const Stone loser = room.GetGame().GetNextTurn();
+
+        if (!room.Forfeit(loser))
+            throw std::logic_error( "Could not resolve expired turn.");
+
+        FinishRoom(room,Protocol::GameEndReason::TurnTimeout);
+
+        return true;
+    }
+
+    Protocol::GameMoveResult NLogicLib::RoomManager::Resign(
+        NServerNetLib::SessionId sessionId,
+        RoomId requestedRoomId,
+        GameClock::time_point now)
+    {
+        using Result = Protocol::GameMoveResult;
+
+        const User* user = m_users.Find(sessionId);
+
+        if (user == nullptr)
+            return Result::NotLoggedIn;
+
+        if (user->GetState() != UserState::InRoom)
+            return Result::NotInRoom;
+
+        if (user->GetRoomId() != requestedRoomId)
+            return Result::WrongRoom;
+
+        const auto it = m_rooms.find(user->GetRoomId());
+
+        if (it == m_rooms.end() ||
+            !it->second.Contains(sessionId))
+        {
+            return Result::StateMismatch;
+        }
+
+        Room& room = it->second;
+
+        // 이미 제한 시간을 넘었다면 시간 초과가 먼저 확정된다.
+        if (ExpireRoom(room, now))
+        {
+            return Result::GameNotRunning;
+        }
+
+        if (room.GetPhase() != Protocol::RoomPhase::Playing ||
+            room.GetGame().GetStatus() != GameStatus::Playing)
+        {
+            return Result::GameNotRunning;
+        }
+
+        const Stone loser = room.GetPlayerStone(sessionId);
+
+        if (!room.Forfeit(loser))
+        {
+            return Result::StateMismatch;
+        }
+
+        FinishRoom(
+            room,
+            Protocol::GameEndReason::Resigned);
+
+        return Result::Success;
     }
 }

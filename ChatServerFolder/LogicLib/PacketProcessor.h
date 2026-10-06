@@ -78,6 +78,9 @@ namespace NLogicLib
 		void HandleGameMove(const NServerNetLib::NetworkEvent& event);
 		bool SendGameMoveResult(SessionId sessionId,Protocol::GameMoveResult result);
 
+		//겜 결과
+		void HandleGameResign(const NServerNetLib::NetworkEvent& event);
+		void FlushFinishedGames();
 	private:
 		std::array<PacketHandler, HANDLER_COUNT> m_handlers{};
 

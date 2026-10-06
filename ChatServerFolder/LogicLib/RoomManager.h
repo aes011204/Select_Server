@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+#include <deque>
+#include <vector>
 #include "Room.h"
 #include "RoomTypes.h"
 #include "UserManager.h"
@@ -22,6 +24,20 @@ namespace NLogicLib
 		size_t MoveCount = 0;
 	};
 
+	struct FinishedGame
+	{
+		RoomId Room = INVALID_ROOM_ID;
+
+		GameStatus Status = GameStatus::NotStarted;
+
+		Protocol::GameEndReason Reason =
+			Protocol::GameEndReason::FiveInRow;
+
+		size_t MoveCount = 0;
+
+		std::vector<NServerNetLib::SessionId> Targets;
+	};
+
 	class RoomManager
 	{
 	public:
@@ -41,11 +57,17 @@ namespace NLogicLib
 
 		//
 		RoomResult SetReady(NServerNetLib::SessionId sessionId,bool ready);
-		RoomResult StartGame(NServerNetLib::SessionId sessionId);
+		RoomResult StartGame(NServerNetLib::SessionId sessionId, GameClock::time_point now = GameClock::now());
 
-		Protocol::GameMoveResult PlaceStone(NServerNetLib::SessionId sessionId,RoomId requestedRoomId,int x,int y,AcceptedMove& out);
+		Protocol::GameMoveResult PlaceStone(NServerNetLib::SessionId sessionId,RoomId requestedRoomId,int x,int y,AcceptedMove& out, GameClock::time_point now = GameClock::now());
+		Protocol::GameMoveResult Resign(NServerNetLib::SessionId sessionId,RoomId requestedRoomId,GameClock::time_point now = GameClock::now());
+		void UpdateTimeouts(GameClock::time_point now = GameClock::now());
+		bool TryPopFinishedGame(FinishedGame& out);
 	private:
 		bool IsValidTitle(const std::string& title) const;
+
+		void FinishRoom(Room& room,Protocol::GameEndReason reason);
+		bool ExpireRoom(Room& room,GameClock::time_point now);
 	private:
 		UserManager& m_users;
 		RoomConfig m_config;
@@ -53,6 +75,8 @@ namespace NLogicLib
 		std::unordered_map<RoomId, Room> m_rooms;
 
 		RoomId m_lastRoomId = INVALID_ROOM_ID;
+
+		std::deque<FinishedGame> m_finishedGames;
 	};
 
 }

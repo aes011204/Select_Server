@@ -66,4 +66,31 @@ namespace Protocol
 
         UINT32 MoveCount = 0;
     };
+
+    enum class GameEndReason : UINT8
+    {
+        FiveInRow = 1,
+        BoardFull = 2,
+        Resigned = 3,
+        TurnTimeout = 4
+    };
+
+    struct GameResignRequest
+    {
+        UINT32 RoomId = 0;
+    };
+
+    // 결과 1바이트라는 기존 본문 형식을 재사용
+    using GameResignResponse = GameMoveResponse;
+
+    struct GameEndNotification
+    {
+        UINT32 RoomId = 0;
+
+        GameState State = GameState::NotStarted;
+
+        GameEndReason Reason = GameEndReason::FiveInRow;
+
+        UINT32 MoveCount = 0;
+    };
 }

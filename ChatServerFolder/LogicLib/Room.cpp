@@ -3,16 +3,17 @@
 #include <stdexcept>
 namespace NLogicLib
 {
-    NLogicLib::Room::Room(RoomId id, std::string title, size_t capacity, NServerNetLib::SessionId creator)
-        : m_id(id), m_title(title),m_capacity(capacity), m_hostSession(creator)
+    NLogicLib::Room::Room(RoomId id, std::string title, size_t capacity, NServerNetLib::SessionId creator, std::chrono::seconds turnTime)
+        : m_id(id), m_title(title),m_capacity(capacity), m_hostSession(creator), m_turnTime(turnTime)
     {
-        if(id == INVALID_ROOM_ID || capacity ==0 || creator==0)
+        if(id == INVALID_ROOM_ID || capacity ==0 || creator==0 || turnTime.count() <= 0)
         {
             throw std::invalid_argument(
                 "Invalid room construction.");
         }
 
         m_members.push_back(creator);
+        m_hostSession = creator;
     }
 
     NLogicLib::Room::~Room()
@@ -38,6 +39,13 @@ namespace NLogicLib
         return Stone::Empty;
     }
 
+    bool Room::IsTurnExpired(GameClock::time_point now) const
+    {
+        return m_phase == Protocol::RoomPhase::Playing &&
+            m_game.GetStatus() == GameStatus::Playing &&
+            now >= m_turnDeadline;
+    }
+
     bool NLogicLib::Room::RemoveMember(NServerNetLib::SessionId sessionId)
     {
         const auto it = find(m_members.begin(), m_members.end(), sessionId);
@@ -54,6 +62,7 @@ namespace NLogicLib
         m_game.Reset();
         m_blackPlayer = 0;
         m_whitePlayer = 0;
+        m_turnDeadline = GameClock::time_point{};
 
         if (m_members.empty())
         {
@@ -87,7 +96,18 @@ namespace NLogicLib
         else
             m_readyMembers.erase(sessionId);
     }
-    void Room::StartGame()
+ 
+    bool Room::Forfeit(Stone loser)
+    {
+        return m_game.Forfeit(loser);
+    }
+    void Room::FinishGame()
+    {
+        m_phase = Protocol::RoomPhase::Waiting;
+        m_readyMembers.clear();
+        m_turnDeadline = GameClock::time_point{};
+    }
+    void Room::StartGame(GameClock::time_point now)
     {
         m_blackPlayer = m_hostSession;
         m_whitePlayer = 0;
@@ -107,8 +127,10 @@ namespace NLogicLib
 
         // 준비는 이번 시작을 위한 상태였으므로 소비한다.
         m_readyMembers.clear();
+
+        m_turnDeadline = now + m_turnTime;
     }
-    MoveResult Room::PlaceStone(NServerNetLib::SessionId sessionId, int x, int y)
+    MoveResult Room::PlaceStone(NServerNetLib::SessionId sessionId, int x, int y, GameClock::time_point now)
     {
         if (m_phase != Protocol::RoomPhase::Playing)
             return MoveResult::GameNotRunning;
@@ -118,6 +140,14 @@ namespace NLogicLib
         if (stone == Stone::Empty)
             return MoveResult::InvalidStone;
 
-        return m_game.TryPlaceStone(stone, x, y);
+        const auto result = m_game.TryPlaceStone(stone, x, y);
+
+        if (result == MoveResult::Success &&
+            m_game.GetStatus() == GameStatus::Playing)
+        {
+            m_turnDeadline = now + m_turnTime;
+        }
+
+        return result;
     }
 }

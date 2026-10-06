@@ -912,6 +912,90 @@ void TestGameReset()
         game.GetNextTurn() == Stone::Black,
         "Restart should begin with black");
 }
+void TestTurnTimeout()
+{
+    using namespace NLogicLib;
+
+    UserManager users;
+
+    RoomConfig config;
+    config.TurnTime = std::chrono::seconds{ 5 };
+
+    RoomManager rooms(users, config);
+
+    Check(
+        users.Login(1, "Kim") == Protocol::LoginResult::Success,
+        "Kim login failed");
+
+    Check(
+        users.Login(2, "Lee") == Protocol::LoginResult::Success,
+        "Lee login failed");
+
+    RoomId roomId = 0;
+
+    Check(
+        rooms.CreateRoom(1, "Timer Room", roomId) ==
+        RoomResult::Success,
+        "Room creation failed");
+
+    Check(
+        rooms.EnterRoom(2, roomId) == RoomResult::Success,
+        "Room entry failed");
+
+    Check(
+        rooms.SetReady(2, true) == RoomResult::Success,
+        "Ready failed");
+
+    const GameClock::time_point t0{};
+
+    Check(
+        rooms.StartGame(1, t0) == RoomResult::Success,
+        "Game start failed");
+
+    AcceptedMove accepted;
+
+    // 백의 잘못된 요청은 시간을 연장하지 않아야 한다.
+    Check(
+        rooms.PlaceStone(
+            2,
+            roomId,
+            7,
+            7,
+            accepted,
+            t0 + std::chrono::seconds{ 4 }) ==
+        Protocol::GameMoveResult::NotYourTurn,
+        "White must not move first");
+
+    rooms.UpdateTimeouts(
+        t0 + std::chrono::seconds{ 5 });
+
+    FinishedGame finished;
+
+    Check(
+        rooms.TryPopFinishedGame(finished),
+        "Timeout should create a game result");
+
+    Check(
+        finished.Status == GameStatus::WhiteWon,
+        "Black timeout should give white the win");
+
+    Check(
+        finished.Reason == Protocol::GameEndReason::TurnTimeout,
+        "Wrong end reason");
+
+    Check(
+        rooms.Find(roomId)->GetPhase() ==
+        Protocol::RoomPhase::Waiting,
+        "Room should return to waiting");
+
+    // 같은 종료를 다시 생성하면 안 된다.
+    rooms.UpdateTimeouts(
+        t0 + std::chrono::seconds{ 100 });
+
+    Check(
+        !rooms.TryPopFinishedGame(finished),
+        "Game must finish only once");
+}
 int main()
 {
     int failed = 0;
@@ -960,6 +1044,11 @@ int main()
 
     if (!RunTest("Game reset", TestGameReset))
         ++failed;
+
+    if (!RunTest("Turn timeout", TestTurnTimeout))
+    {
+        ++failed;
+    }
 
     std::cout
         << "Failed tests: "

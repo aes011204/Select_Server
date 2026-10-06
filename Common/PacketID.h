@@ -38,4 +38,8 @@ namespace Protocol
 	constexpr UINT16 GAME_MOVE_RES = 41;
 	constexpr UINT16 GAME_MOVE_NTF = 42;
 
+	constexpr UINT16 GAME_RESIGN_REQ = 43;
+	constexpr UINT16 GAME_RESIGN_RES = 44;
+	constexpr UINT16 GAME_END_NTF = 45;
+
 }

@@ -65,6 +65,20 @@ namespace NLogicLib
         return MoveResult::Success;
     }
 
+    bool OmokGame::Forfeit(Stone loser)
+    {
+        if (m_status != GameStatus::Playing)
+            return false;
+
+        if (loser != Stone::Black &&loser != Stone::White)
+            return false;
+
+        m_status =loser == Stone::Black? GameStatus::WhiteWon: GameStatus::BlackWon;
+
+        m_nextTurn = Stone::Empty;
+        return true;;
+    }
+
     int NLogicLib::OmokGame::CountDirection(Stone stone, int x, int y, int dx, int dy) const
     {
         int count = 0;

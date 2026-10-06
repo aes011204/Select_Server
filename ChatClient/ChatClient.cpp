@@ -91,6 +91,7 @@ bool ProcessCommand(TcpClient& client, const std::string& command, ClientGameVie
 		std::cout << "ready on\n";
 		std::cout << "ready off\n";
 		std::cout << "start\n";
+		std::cout << "resign\n";
 
 		return true;
 	}
@@ -338,6 +339,32 @@ bool ProcessCommand(TcpClient& client, const std::string& command, ClientGameVie
 		return SendEncodedBody(
 			client,
 			Protocol::GAME_MOVE_REQ,
+			body);
+	}
+
+	if (command == "resign")
+	{
+		if (!game.RoomPlaying ||
+			game.State != Protocol::GameState::Playing)
+		{
+			std::cout << "No active game.\n";
+			return true;
+		}
+
+		Protocol::GameResignRequest request;
+		request.RoomId = game.RoomId;
+
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode resign request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::GAME_RESIGN_REQ,
 			body);
 	}
 
@@ -624,9 +651,23 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 		const bool nowPlaying =
 			notification.Phase == Protocol::RoomPhase::Playing;
 
+		const bool hasFinalResult =
+			game.State == Protocol::GameState::BlackWon ||
+			game.State == Protocol::GameState::WhiteWon ||
+			game.State == Protocol::GameState::Draw;
+
 		if (!nowPlaying)
 		{
-			game.Reset(notification.RoomId);
+			if (game.RoomId == notification.RoomId &&
+				hasFinalResult)
+			{
+				// 결과와 마지막 보드는 유지하고, 방은 대기 상태로 표시.
+				game.RoomPlaying = false;
+			}
+			else
+			{
+				game.Reset(notification.RoomId);
+			}
 		}
 		else if (game.RoomId != notification.RoomId ||
 			!game.RoomPlaying)
@@ -724,6 +765,59 @@ bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 		game.Print();
 		return true;
 	}
+
+	case Protocol::GAME_RESIGN_RES:
+	{
+		Protocol::GameResignResponse response;
+
+		if (!Protocol::Decode(packet.Body, response))
+		{
+			std::cerr << "Invalid resign response.\n";
+			return false;
+		}
+
+		if (response.Result != Protocol::GameMoveResult::Success)
+		{
+			std::cout
+				<< "[Resign] "
+				<< MoveResultText(response.Result)
+				<< '\n';
+		}
+
+		return true;
+	}
+
+	case Protocol::GAME_END_NTF:
+	{
+		Protocol::GameEndNotification notification;
+
+		if (!Protocol::Decode(packet.Body, notification))
+		{
+			std::cerr << "Invalid game end notification.\n";
+			return false;
+		}
+
+		if (notification.RoomId != game.RoomId ||
+			!game.RoomPlaying ||
+			notification.MoveCount != game.MoveCount)
+		{
+			std::cerr << "Game end state is out of sync.\n";
+			return false;
+		}
+
+		game.State = notification.State;
+		game.NextTurn = Protocol::GameStone::Empty;
+		game.RoomPlaying = false;
+
+		std::cout
+			<< "\n[Game ended] "
+			<< GameEndReasonText(notification.Reason)
+			<< '\n';
+
+		game.Print();
+		return true;
+	}
+
 	default:
 		std::cerr << "Unexpected packet ID: "
 			<< packet.PacketId << '\n';
@@ -836,6 +930,26 @@ const char* MoveResultText(Protocol::GameMoveResult result)
 	}
 
 	return "Unknown result";
+}
+
+const char* GameEndReasonText(Protocol::GameEndReason reason)
+{
+	switch (reason)
+	{
+	case Protocol::GameEndReason::FiveInRow:
+		return "Five or more connected stones";
+
+	case Protocol::GameEndReason::BoardFull:
+		return "Board is full";
+
+	case Protocol::GameEndReason::Resigned:
+		return "Resignation";
+
+	case Protocol::GameEndReason::TurnTimeout:
+		return "Turn timeout";
+	}
+
+	return "Unknown reason";
 }
 
 int main()

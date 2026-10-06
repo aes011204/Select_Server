@@ -133,9 +133,7 @@ namespace Protocol
         return writer.Finish(out);
     }
 
-    inline bool Decode(
-        const PacketBody& body,
-        GameMoveNotification& out)
+    inline bool Decode(const PacketBody& body,GameMoveNotification& out)
     {
         RoomCodecDetail::Reader reader(body);
         GameMoveNotification decoded;
@@ -161,6 +159,115 @@ namespace Protocol
         decoded.State = static_cast<GameState>(state);
 
         if (!IsValidGameMove(decoded))
+        {
+            return false;
+        }
+
+        out = decoded;
+        return true;
+    }
+
+    //종료 패킷 코덱
+    inline bool Encode(
+        const GameResignRequest& packet,
+        PacketBody& out)
+    {
+        RoomCodecDetail::Writer writer;
+        writer.U32(packet.RoomId);
+        return writer.Finish(out);
+    }
+
+    inline bool Decode(
+        const PacketBody& body,
+        GameResignRequest& out)
+    {
+        RoomCodecDetail::Reader reader(body);
+        GameResignRequest decoded;
+
+        if (!reader.U32(decoded.RoomId) || !reader.Done())
+        {
+            return false;
+        }
+
+        out = decoded;
+        return true;
+    }
+
+    inline bool IsValidGameEnd(
+        const GameEndNotification& packet)
+    {
+        if (packet.RoomId == 0 ||
+            packet.MoveCount >
+            GAME_BOARD_SIZE * GAME_BOARD_SIZE)
+        {
+            return false;
+        }
+
+        const bool hasWinner =
+            packet.State == GameState::BlackWon ||
+            packet.State == GameState::WhiteWon;
+
+        switch (packet.Reason)
+        {
+        case GameEndReason::FiveInRow:
+            return hasWinner;
+
+        case GameEndReason::BoardFull:
+            return packet.State == GameState::Draw &&
+                packet.MoveCount ==
+                GAME_BOARD_SIZE * GAME_BOARD_SIZE;
+
+        case GameEndReason::Resigned:
+        case GameEndReason::TurnTimeout:
+            return hasWinner;
+
+        default:
+            return false;
+        }
+    }
+
+    inline bool Encode(
+        const GameEndNotification& packet,
+        PacketBody& out)
+    {
+        if (!IsValidGameEnd(packet))
+        {
+            return false;
+        }
+
+        RoomCodecDetail::Writer writer;
+
+        writer.U32(packet.RoomId);
+        writer.U8(static_cast<std::uint8_t>(packet.State));
+        writer.U8(static_cast<std::uint8_t>(packet.Reason));
+        writer.U32(packet.MoveCount);
+
+        return writer.Finish(out);
+    }
+
+    inline bool Decode(
+        const PacketBody& body,
+        GameEndNotification& out)
+    {
+        RoomCodecDetail::Reader reader(body);
+        GameEndNotification decoded;
+
+        std::uint8_t state = 0;
+        std::uint8_t reason = 0;
+
+        if (!reader.U32(decoded.RoomId) ||
+            !reader.U8(state) ||
+            !reader.U8(reason) ||
+            !reader.U32(decoded.MoveCount) ||
+            !reader.Done())
+        {
+            return false;
+        }
+
+        decoded.State = static_cast<GameState>(state);
+        decoded.Reason = static_cast<GameEndReason>(reason);
+
+        if (!IsValidGameEnd(decoded))
         {
             return false;
         }

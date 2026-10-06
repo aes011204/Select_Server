@@ -13,7 +13,7 @@ namespace NLogicLib
 	class Room
 	{
 	public:
-		Room(RoomId id, std::string title, size_t capacity, NServerNetLib::SessionId creator);
+		Room(RoomId id, std::string title, size_t capacity, NServerNetLib::SessionId creator, std::chrono::seconds turnTime);
 
 		virtual ~Room();
 
@@ -37,6 +37,8 @@ namespace NLogicLib
 
 		const OmokGame& GetGame() const { return m_game; };
 		Stone GetPlayerStone(NServerNetLib::SessionId sessionId) const;
+
+		bool IsTurnExpired(GameClock::time_point now) const;
 	private:
 		friend class RoomManager;
 		bool RemoveMember(NServerNetLib::SessionId sessionId);
@@ -45,10 +47,12 @@ namespace NLogicLib
 
 		//
 		void SetReady(NServerNetLib::SessionId sessionId,bool ready);
-		void StartGame();
+		void StartGame(GameClock::time_point now);
 
-		MoveResult PlaceStone(NServerNetLib::SessionId sessionId,int x,int y);
+		MoveResult PlaceStone(NServerNetLib::SessionId sessionId,int x,int y, GameClock::time_point now);
 
+		bool Forfeit(Stone loser);
+		void FinishGame();
 	private:
 		RoomId m_id;
 		std::string m_title;
@@ -64,6 +68,9 @@ namespace NLogicLib
 		OmokGame m_game;
 		NServerNetLib::SessionId m_blackPlayer = 0;
 		NServerNetLib::SessionId m_whitePlayer = 0;
+
+		std::chrono::seconds m_turnTime{ 30 };
+		GameClock::time_point m_turnDeadline{};
 	};
 
 }

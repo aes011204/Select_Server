@@ -42,6 +42,7 @@ namespace NLogicLib
 
         Stone GetStone(int x, int y) const { return m_board[y][x]; };
         const std::array<std::array<Stone, BOARD_SIZE>, BOARD_SIZE>& GetBoard() const { return m_board; };
+        bool Forfeit(Stone loser);
 
     private:
         bool IsInside(int x, int y) const { return x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE; };
