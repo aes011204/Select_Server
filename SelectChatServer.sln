@@ -15,6 +15,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ServerTests", "ServerTests\
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "common", "common", "{A0879A11-3E0C-4466-9098-10085C39768F}"
 	ProjectSection(SolutionItems) = preProject
+		Common\GamePacketCodec.h = Common\GamePacketCodec.h
+		Common\GamePackets.h = Common\GamePackets.h
 		Common\PacketCode.h = Common\PacketCode.h
 		Common\PacketID.h = Common\PacketID.h
 		Common\PacketMessages.h = Common\PacketMessages.h

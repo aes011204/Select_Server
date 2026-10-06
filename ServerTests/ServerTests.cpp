@@ -4,13 +4,17 @@
 
 #include "../ChatServerFolder/LogicLib/PacketProcessor.h"
 #include "../ChatServerFolder/LogicLib/RoomManager.h"
+#include "../ChatServerFolder/LogicLib/OmokGame.h"
 #include "../Common/PacketID.h"
 #include "../Common/PacketCode.h"
 #include "../Common/RoomPacketCodec.h"
+#include "../Common/GamePacketCodec.h"
 #include <chrono>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+using Stone = Protocol::GameStone;
+using GameStatus = Protocol::GameState;
 
 
 void Check(bool condition, const char* message)
@@ -577,6 +581,26 @@ void TestReadyAndStartRules()
         room->GetPhase() == Protocol::RoomPhase::Playing,
         "Room should be playing");
 
+
+    Check(
+        room->GetGame().GetStatus() ==
+        Protocol::GameState::Playing,
+        "Starting room should start OmokGame");
+
+    Check(
+        room->GetGame().GetNextTurn() ==
+        Protocol::GameStone::Black,
+        "New game should begin with black");
+
+    Check(
+        room->GetPlayerStone(1) == Protocol::GameStone::Black,
+        "Host should play black");
+
+    Check(
+        room->GetPlayerStone(2) == Protocol::GameStone::White,
+        "Guest should play white");
+
+
     Check(
         !room->IsReady(2),
         "Ready state should be cleared after start");
@@ -585,6 +609,47 @@ void TestReadyAndStartRules()
         rooms.SetReady(2, false) ==
         NLogicLib::RoomResult::GameInProgress,
         "Ready must not change during game");
+
+
+    NLogicLib::AcceptedMove accepted;
+
+    Check(
+        rooms.PlaceStone(2, roomId, 7, 7, accepted) ==
+        Protocol::GameMoveResult::NotYourTurn,
+        "White must not move first");
+
+    Check(
+        rooms.PlaceStone(1, roomId, 7, 7, accepted) ==
+        Protocol::GameMoveResult::Success,
+        "Black move should succeed");
+
+    Check(
+        accepted.PlacedStone == Protocol::GameStone::Black &&
+        accepted.NextTurn == Protocol::GameStone::White &&
+        accepted.MoveCount == 1,
+        "Accepted move data is incorrect");
+
+    Check(
+        rooms.PlaceStone(2, roomId, 7, 7, accepted) ==
+        Protocol::GameMoveResult::Occupied,
+        "Occupied position must be rejected");
+
+    Check(
+        rooms.PlaceStone(2, roomId, 15, 0, accepted) ==
+        Protocol::GameMoveResult::OutOfBounds,
+        "Server must reject invalid coordinates");
+
+    Check(
+        rooms.PlaceStone(2, roomId + 100, 7, 8, accepted) ==
+        Protocol::GameMoveResult::WrongRoom,
+        "Request must match the actual room");
+
+    Check(
+        rooms.PlaceStone(2, roomId, 7, 8, accepted) ==
+        Protocol::GameMoveResult::Success,
+        "White should still be able to move after rejections");
+
+
 
     Check(
         rooms.LeaveRoom(1) ==
@@ -602,8 +667,251 @@ void TestReadyAndStartRules()
     Check(
         room->GetPhase() == Protocol::RoomPhase::Waiting,
         "Room should return to waiting");
+
+
+
+    Check(
+        room->GetGame().GetStatus() ==
+        Protocol::GameState::NotStarted,
+        "Leaving should reset the game");
+
+    Check(
+        room->GetPlayerStone(2) == Protocol::GameStone::Empty,
+        "Leaving should clear player color assignments");
+
+}
+void TestGameStartAndValidation()
+{
+    using namespace NLogicLib;
+
+    OmokGame game;
+
+    Check(
+        game.TryPlaceStone(Stone::Black, 7, 7) ==
+        MoveResult::GameNotRunning,
+        "Game must start before placing stones");
+
+    game.Start();
+
+    Check(
+        game.GetStatus() == GameStatus::Playing,
+        "Game should be playing");
+
+    Check(
+        game.GetNextTurn() == Stone::Black,
+        "Black should move first");
+
+    Check(
+        game.GetMoveCount() == 0,
+        "New game should have no moves");
+
+    Check(
+        game.TryPlaceStone(Stone::White, 7, 7) ==
+        MoveResult::NotYourTurn,
+        "White must not move first");
+
+    Check(
+        game.TryPlaceStone(Stone::Black, -1, 7) ==
+        MoveResult::OutOfBounds,
+        "Negative coordinate must be rejected");
+
+    Check(
+        game.TryPlaceStone(Stone::Black, 15, 7) ==
+        MoveResult::OutOfBounds,
+        "Coordinate 15 must be rejected");
+
+    Check(
+        game.TryPlaceStone(Stone::Empty, 7, 7) ==
+        MoveResult::InvalidStone,
+        "Empty is not a playable stone");
+
+    Check(
+        game.GetMoveCount() == 0 &&
+        game.GetNextTurn() == Stone::Black &&
+        game.GetStone(7, 7) == Stone::Empty,
+        "Rejected moves must not change the game");
+
+    Check(
+        game.TryPlaceStone(Stone::Black, 7, 7) ==
+        MoveResult::Success,
+        "Black move should succeed");
+
+    Check(
+        game.GetStone(7, 7) == Stone::Black &&
+        game.GetMoveCount() == 1 &&
+        game.GetNextTurn() == Stone::White,
+        "Accepted move should update board and turn");
+
+    Check(
+        game.TryPlaceStone(Stone::White, 7, 7) ==
+        MoveResult::Occupied,
+        "Occupied position must be rejected");
+
+    Check(
+        game.GetNextTurn() == Stone::White &&
+        game.GetMoveCount() == 1,
+        "Rejected occupied move must preserve turn");
+}
+void CheckBlackWinLine(
+    int startX,
+    int startY,
+    int dx,
+    int dy)
+{
+    using namespace NLogicLib;
+
+    OmokGame game;
+    game.Start();
+
+    for (int i = 0; i < 5; ++i)
+    {
+        Check(
+            game.TryPlaceStone(
+                Stone::Black,
+                startX + dx * i,
+                startY + dy * i) == MoveResult::Success,
+            "Black line move failed");
+
+        if (i < 4)
+        {
+            // 테스트하는 흑의 연결과 겹치지 않는 위치.
+            Check(
+                game.TryPlaceStone(
+                    Stone::White,
+                    i * 2,
+                    14) == MoveResult::Success,
+                "White filler move failed");
+        }
+    }
+
+    Check(
+        game.GetStatus() == GameStatus::BlackWon,
+        "Five connected black stones should win");
+
+    Check(
+        game.GetNextTurn() == Stone::Empty,
+        "Finished game should have no next turn");
+
+    Check(
+        game.TryPlaceStone(Stone::White, 14, 13) ==
+        MoveResult::GameNotRunning,
+        "Finished game must reject further moves");
+}
+void TestWinningDirections()
+{
+    CheckBlackWinLine(0, 0, 1, 0);  // 가로
+    CheckBlackWinLine(0, 0, 0, 1);  // 세로
+    CheckBlackWinLine(0, 0, 1, 1);  // 오른쪽 아래 대각선
+    CheckBlackWinLine(0, 4, 1, -1); // 오른쪽 위 대각선
 }
 
+void TestOverlineAndBothDirections()
+{
+    using namespace NLogicLib;
+
+    OmokGame game;
+    game.Start();
+
+    const int blackXs[] = { 0, 1, 2, 4, 5 };
+
+    for (int i = 0; i < 5; ++i)
+    {
+        Check(
+            game.TryPlaceStone(
+                Stone::Black, blackXs[i], 7) ==
+            MoveResult::Success,
+            "Black setup move failed");
+
+        Check(
+            game.TryPlaceStone(
+                Stone::White, i * 2, 14) ==
+            MoveResult::Success,
+            "White setup move failed");
+    }
+
+    Check(
+        game.GetStatus() == GameStatus::Playing,
+        "Separated stones must not win");
+
+    Check(
+        game.TryPlaceStone(Stone::Black, 3, 7) ==
+        MoveResult::Success,
+        "Connecting move should succeed");
+
+    Check(
+        game.GetStatus() == GameStatus::BlackWon,
+        "Six connected stones should win in freestyle rules");
+}
+void TestWhiteWin()
+{
+    using namespace NLogicLib;
+
+    OmokGame game;
+    game.Start();
+
+    for (int i = 0; i < 5; ++i)
+    {
+        Check(
+            game.TryPlaceStone(
+                Stone::Black, i * 2, 14) ==
+            MoveResult::Success,
+            "Black filler move failed");
+
+        Check(
+            game.TryPlaceStone(
+                Stone::White, i, 0) ==
+            MoveResult::Success,
+            "White line move failed");
+    }
+
+    Check(
+        game.GetStatus() == GameStatus::WhiteWon,
+        "Five connected white stones should win");
+}
+
+void TestGameReset()
+{
+    using namespace NLogicLib;
+
+    OmokGame game;
+    game.Start();
+
+    Check(
+        game.TryPlaceStone(Stone::Black, 7, 7) ==
+        MoveResult::Success,
+        "Setup move failed");
+
+    game.Reset();
+
+    Check(
+        game.GetStatus() == GameStatus::NotStarted,
+        "Reset should stop the game");
+
+    Check(
+        game.GetNextTurn() == Stone::Empty,
+        "Reset should clear the turn");
+
+    Check(
+        game.GetMoveCount() == 0,
+        "Reset should clear move count");
+
+    for (const auto& row : game.GetBoard())
+    {
+        for (auto stone : row)
+        {
+            Check(
+                stone == Stone::Empty,
+                "Reset should clear every board cell");
+        }
+    }
+
+    game.Start();
+
+    Check(
+        game.GetStatus() == GameStatus::Playing &&
+        game.GetNextTurn() == Stone::Black,
+        "Restart should begin with black");
+}
 int main()
 {
     int failed = 0;
@@ -637,6 +945,21 @@ int main()
     {
         ++failed;
     }
+
+    if (!RunTest("Game validation", TestGameStartAndValidation))
+        ++failed;
+
+    if (!RunTest("Winning directions", TestWinningDirections))
+        ++failed;
+
+    if (!RunTest("Overline", TestOverlineAndBothDirections))
+        ++failed;
+
+    if (!RunTest("White win", TestWhiteWin))
+        ++failed;
+
+    if (!RunTest("Game reset", TestGameReset))
+        ++failed;
 
     std::cout
         << "Failed tests: "

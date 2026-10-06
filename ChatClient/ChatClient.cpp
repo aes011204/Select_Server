@@ -11,8 +11,9 @@
 #include "../Common/PacketUtils.h"
 #include "../Common/PacketCode.h"
 #include "../Common/RoomPacketCodec.h"
-
-
+#include "ClientGameView.h"
+#include "../Common/GamePacketCodec.h"
+#include <sstream>
 
 
 using namespace NChatClient;
@@ -20,9 +21,11 @@ using namespace NChatClient;
 // 함수 선언
 bool SendEncodedBody(NChatClient::TcpClient& client, UINT16 packetId, const Protocol::PacketBody& body);
 bool TryParseRoomId(const std::string& text, UINT32& out);
-bool ProcessCommand(NChatClient::TcpClient& client, const std::string& command);
+//bool ProcessCommand(NChatClient::TcpClient& client, const std::string& command);
+bool ProcessCommand(TcpClient& client,const std::string& command,ClientGameView& game);
 bool ProcessChatNotification(const NChatClient::ClientPacket& packet);
-bool ProcessResponse(const NChatClient::ClientPacket& packet);
+//bool ProcessResponse(const NChatClient::ClientPacket& packet);
+bool ProcessResponse(const ClientPacket& packet,ClientGameView& game);
 void CheckPacketCodec();
 const char* RoomResultText(Protocol::RoomResult result);
 
@@ -69,9 +72,7 @@ bool TryParseRoomId(
 	return true;
 }
 
-bool ProcessCommand(
-	TcpClient& client,
-	const std::string& command)
+bool ProcessCommand(TcpClient& client, const std::string& command, ClientGameView& game)
 {
 	if (command == "quit")
 	{
@@ -90,6 +91,13 @@ bool ProcessCommand(
 		std::cout << "ready on\n";
 		std::cout << "ready off\n";
 		std::cout << "start\n";
+
+		return true;
+	}
+
+	if (command == "board")
+	{
+		game.Print();
 		return true;
 	}
 
@@ -286,6 +294,53 @@ bool ProcessCommand(
 			body);
 	}
 
+	if (command == "move" ||
+		command.rfind("move ", 0) == 0)
+	{
+		if (game.RoomId == 0 ||
+			!game.RoomPlaying ||
+			game.State != Protocol::GameState::Playing)
+		{
+			std::cout << "Start a game first.\n";
+			return true;
+		}
+
+		std::istringstream input(command);
+
+		std::string verb;
+		std::string extra;
+
+		int x = 0;
+		int y = 0;
+
+		if (!(input >> verb >> x >> y) ||
+			(input >> extra) ||
+			x < 0 || x >= 15 ||
+			y < 0 || y >= 15)
+		{
+			std::cout << "Usage: move <x:0-14> <y:0-14>\n";
+			return true;
+		}
+
+		Protocol::GameMoveRequest request;
+		request.RoomId = game.RoomId;
+		request.X = static_cast<std::uint8_t>(x);
+		request.Y = static_cast<std::uint8_t>(y);
+
+		Protocol::PacketBody body;
+
+		if (!Protocol::Encode(request, body))
+		{
+			std::cerr << "Could not encode move request.\n";
+			return false;
+		}
+
+		return SendEncodedBody(
+			client,
+			Protocol::GAME_MOVE_REQ,
+			body);
+	}
+
 	if (!command.empty())
 	{
 		std::cout << "Unknown command. Type help.\n";
@@ -314,7 +369,7 @@ bool ProcessChatNotification(const ClientPacket& packet)
 	return true;
 }
 
-bool ProcessResponse(const ClientPacket& packet)
+bool ProcessResponse(const ClientPacket& packet, ClientGameView& game)
 {
 	switch (packet.PacketId)
 	{
@@ -475,6 +530,12 @@ bool ProcessResponse(const ClientPacket& packet)
 			return false;
 		}
 
+		if (packet.PacketId == Protocol::ROOM_LEAVE_RES &&
+			response.Result == Protocol::RoomResult::Success)
+		{
+			game.Reset();
+		}
+
 		const char* action = "Room";
 
 		switch (packet.PacketId)
@@ -559,6 +620,22 @@ bool ProcessResponse(const ClientPacket& packet)
 			return false;
 		}
 
+
+		const bool nowPlaying =
+			notification.Phase == Protocol::RoomPhase::Playing;
+
+		if (!nowPlaying)
+		{
+			game.Reset(notification.RoomId);
+		}
+		else if (game.RoomId != notification.RoomId ||
+			!game.RoomPlaying)
+		{
+			game.Begin(notification.RoomId);
+			game.Print();
+		}
+
+
 		const bool playing =
 			notification.Phase == Protocol::RoomPhase::Playing;
 
@@ -594,6 +671,57 @@ bool ProcessResponse(const ClientPacket& packet)
 			std::cout << '\n';
 		}
 
+		return true;
+	}
+	case Protocol::GAME_MOVE_RES:
+	{
+		Protocol::GameMoveResponse response;
+
+		if (!Protocol::Decode(packet.Body, response))
+		{
+			std::cerr << "Invalid move response.\n";
+			return false;
+		}
+
+		if (response.Result != Protocol::GameMoveResult::Success)
+		{
+			std::cout
+				<< "[Move] "
+				<< MoveResultText(response.Result)
+				<< '\n';
+		}
+
+		// 성공 시 보드는 알림 패킷에서 변경한다.
+		return true;
+	}
+	case Protocol::GAME_MOVE_NTF:
+	{
+		Protocol::GameMoveNotification notification;
+
+		if (!Protocol::Decode(packet.Body, notification))
+		{
+			std::cerr << "Invalid move notification.\n";
+			return false;
+		}
+
+		if (!game.Apply(notification))
+		{
+			std::cerr << "Client board is out of sync.\n";
+			return false;
+		}
+
+		std::cout
+			<< "\n[Move] "
+			<< (notification.PlacedStone == Protocol::GameStone::Black
+				? "Black"
+				: "White")
+			<< " at ("
+			<< static_cast<int>(notification.X)
+			<< ", "
+			<< static_cast<int>(notification.Y)
+			<< ")\n";
+
+		game.Print();
 		return true;
 	}
 	default:
@@ -690,9 +818,31 @@ const char* RoomResultText(Protocol::RoomResult result)
 	return "Unknown result";
 }
 
+const char* MoveResultText(Protocol::GameMoveResult result)
+{
+	using R = Protocol::GameMoveResult;
+
+	switch (result)
+	{
+	case R::Success:        return "Success";
+	case R::NotLoggedIn:    return "Login first";
+	case R::NotInRoom:      return "Enter a room first";
+	case R::WrongRoom:      return "Room does not match";
+	case R::GameNotRunning: return "Game is not running";
+	case R::OutOfBounds:    return "Position is outside the board";
+	case R::NotYourTurn:    return "Not your turn";
+	case R::Occupied:       return "Position is already occupied";
+	case R::StateMismatch:  return "Server state mismatch";
+	}
+
+	return "Unknown result";
+}
+
 int main()
 {
 	CheckPacketCodec();
+
+	ClientGameView game;
 
 	TcpClient client;
 
@@ -709,7 +859,7 @@ int main()
 	std::cout << "Commands: login <nickname>, echo <message>, quit\n";
 	std::cout << "> ";
 
-	bool running = true;
+	bool running;
 	std::string input;
 
 
@@ -729,7 +879,7 @@ int main()
 			{
 				std::cout << '\n';
 
-				running = ProcessCommand(client, input);
+				running = ProcessCommand(client, input, game);
 				input.clear();
 
 				if (!running)
@@ -771,7 +921,7 @@ int main()
 
 		while (client.TryPopPacket(packet))
 		{
-			if (!ProcessResponse(packet))
+			if (!ProcessResponse(packet, game))
 			{
 				running = false;
 				break;

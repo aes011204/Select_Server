@@ -11,6 +11,8 @@
     <ClCompile Include="RoomManager.cpp">
       <Filter>Room</Filter>
     </ClCompile>
+    <ClCompile Include="OmokGame.cpp" />
+    <ClCompile Include="PacketProcessorGame.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PacketProcessor.h" />
@@ -25,6 +27,7 @@
     <ClInclude Include="RoomTypes.h">
       <Filter>Room</Filter>
     </ClInclude>
+    <ClInclude Include="OmokGame.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Room">

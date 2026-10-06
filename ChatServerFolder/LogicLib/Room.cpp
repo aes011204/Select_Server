@@ -24,6 +24,20 @@ namespace NLogicLib
         return find( m_members.begin(), m_members.end(), sessionId) != m_members.end();
     }
 
+    Stone Room::GetPlayerStone(NServerNetLib::SessionId sessionId) const
+    {
+        if (sessionId == 0)
+            return Stone::Empty;
+
+        if (sessionId == m_blackPlayer)
+            return Stone::Black;
+
+        if (sessionId == m_whitePlayer)
+            return Stone::White;
+
+        return Stone::Empty;
+    }
+
     bool NLogicLib::Room::RemoveMember(NServerNetLib::SessionId sessionId)
     {
         const auto it = find(m_members.begin(), m_members.end(), sessionId);
@@ -36,6 +50,10 @@ namespace NLogicLib
         // 누가 나가면 게임을 중단하고 대기로 복귀.
         m_phase = Protocol::RoomPhase::Waiting;
         m_readyMembers.clear();
+
+        m_game.Reset();
+        m_blackPlayer = 0;
+        m_whitePlayer = 0;
 
         if (m_members.empty())
         {
@@ -71,9 +89,35 @@ namespace NLogicLib
     }
     void Room::StartGame()
     {
+        m_blackPlayer = m_hostSession;
+        m_whitePlayer = 0;
+
+        for (auto member : m_members)
+        {
+            if (member != m_hostSession)
+            {
+                m_whitePlayer = member;
+                break;
+            }
+        }
+
+        m_game.Start();
+
         m_phase = Protocol::RoomPhase::Playing;
 
         // 준비는 이번 시작을 위한 상태였으므로 소비한다.
         m_readyMembers.clear();
+    }
+    MoveResult Room::PlaceStone(NServerNetLib::SessionId sessionId, int x, int y)
+    {
+        if (m_phase != Protocol::RoomPhase::Playing)
+            return MoveResult::GameNotRunning;
+
+        const Stone stone = GetPlayerStone(sessionId);
+
+        if (stone == Stone::Empty)
+            return MoveResult::InvalidStone;
+
+        return m_game.TryPlaceStone(stone, x, y);
     }
 }

@@ -139,8 +139,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="LogicLib.cpp" />
+    <ClCompile Include="OmokGame.cpp" />
     <ClCompile Include="PacketProcessor.cpp" />
     <ClCompile Include="PacketProcessorChat.cpp" />
+    <ClCompile Include="PacketProcessorGame.cpp" />
     <ClCompile Include="Room.cpp" />
     <ClCompile Include="RoomManager.cpp" />
     <ClCompile Include="UserManager.cpp" />
@@ -151,6 +153,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="OmokGame.h" />
     <ClInclude Include="PacketProcessor.h" />
     <ClInclude Include="Room.h" />
     <ClInclude Include="RoomManager.h" />

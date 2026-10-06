@@ -34,4 +34,8 @@ namespace Protocol
 
 	constexpr UINT16 ROOM_STATE_NTF = 33;
 
+	constexpr UINT16 GAME_MOVE_REQ = 40;
+	constexpr UINT16 GAME_MOVE_RES = 41;
+	constexpr UINT16 GAME_MOVE_NTF = 42;
+
 }

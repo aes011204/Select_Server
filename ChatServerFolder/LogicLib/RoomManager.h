@@ -1,12 +1,27 @@
 #pragma once
 #include <string>
 #include <unordered_map>
-
 #include "Room.h"
 #include "RoomTypes.h"
 #include "UserManager.h"
+#include "../../Common/GamePackets.h"
 namespace NLogicLib
 {
+	struct AcceptedMove
+	{
+		RoomId Room = INVALID_ROOM_ID;
+
+		int X = 0;
+		int Y = 0;
+
+		Stone PlacedStone = Stone::Empty;
+		Stone NextTurn = Stone::Empty;
+
+		GameStatus Status = GameStatus::NotStarted;
+
+		size_t MoveCount = 0;
+	};
+
 	class RoomManager
 	{
 	public:
@@ -27,6 +42,8 @@ namespace NLogicLib
 		//
 		RoomResult SetReady(NServerNetLib::SessionId sessionId,bool ready);
 		RoomResult StartGame(NServerNetLib::SessionId sessionId);
+
+		Protocol::GameMoveResult PlaceStone(NServerNetLib::SessionId sessionId,RoomId requestedRoomId,int x,int y,AcceptedMove& out);
 	private:
 		bool IsValidTitle(const std::string& title) const;
 	private:

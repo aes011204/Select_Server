@@ -178,6 +178,9 @@ void NLogicLib::PacketProcessor::RegisterHandlers()
 	//겜 준비
 	RegisterHandler(Protocol::ROOM_READY_REQ, [this](const Event& event) {HandleRoomReady(event);});
 	RegisterHandler(Protocol::ROOM_START_REQ, [this](const Event& event) {HandleRoomStart(event);});
+
+	//겜
+	RegisterHandler(Protocol::GAME_MOVE_REQ,[this](const Event& event){HandleGameMove(event);});
 }
 
 void NLogicLib::PacketProcessor::RegisterHandler(UINT16 packetId, PacketHandler handler)

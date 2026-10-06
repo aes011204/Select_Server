@@ -7,7 +7,7 @@
 #include <chrono>
 #include <unordered_map>
 #include "RoomManager.h"
-
+#include "../../Common/GamePackets.h"
 namespace NLogicLib
 {
 	using SessionId = NServerNetLib::SessionId;
@@ -74,6 +74,10 @@ namespace NLogicLib
 		void HandleRoomReady(const NServerNetLib::NetworkEvent& event);
 		void HandleRoomStart(const NServerNetLib::NetworkEvent& event);
 		void NotifyRoomState(RoomId roomId);
+
+		void HandleGameMove(const NServerNetLib::NetworkEvent& event);
+		bool SendGameMoveResult(SessionId sessionId,Protocol::GameMoveResult result);
+
 	private:
 		std::array<PacketHandler, HANDLER_COUNT> m_handlers{};
 

@@ -261,6 +261,69 @@ namespace NLogicLib
         return RoomResult::Success;
     }
 
+    Protocol::GameMoveResult RoomManager::PlaceStone(NServerNetLib::SessionId sessionId, RoomId requestedRoomId, int x, int y, AcceptedMove& out)
+    {
+        using Result = Protocol::GameMoveResult;
+
+        const User* user = m_users.Find(sessionId);
+
+        if (user == nullptr)
+            return Result::NotLoggedIn;
+
+        if (user->GetState() != UserState::InRoom)
+            return Result::NotInRoom;
+
+        if (user->GetRoomId() != requestedRoomId)
+            return Result::WrongRoom;
+
+        const auto it = m_rooms.find(user->GetRoomId());
+
+        if (it == m_rooms.end() || !it->second.Contains(sessionId))
+            return Result::StateMismatch;
+
+        Room& room = it->second;
+        const Stone stone = room.GetPlayerStone(sessionId);
+
+        const MoveResult result =room.PlaceStone(sessionId, x, y);
+
+        switch (result)
+        {
+        case MoveResult::GameNotRunning:
+            return Result::GameNotRunning;
+
+        case MoveResult::OutOfBounds:
+            return Result::OutOfBounds;
+
+        case MoveResult::NotYourTurn:
+            return Result::NotYourTurn;
+
+        case MoveResult::Occupied:
+            return Result::Occupied;
+
+        case MoveResult::InvalidStone:
+            return Result::StateMismatch;
+
+        case MoveResult::Success:
+            break;
+
+        default:
+            return Result::StateMismatch;
+        }
+
+        AcceptedMove accepted;
+        accepted.Room = room.GetId();
+        accepted.X = x;
+        accepted.Y = y;
+        accepted.PlacedStone = stone;
+
+        accepted.NextTurn = room.GetGame().GetNextTurn();
+        accepted.Status = room.GetGame().GetStatus();
+        accepted.MoveCount = room.GetGame().GetMoveCount();
+
+        out = accepted;
+        return Result::Success;
+    }
+
     bool RoomManager::IsValidTitle(const std::string& title) const
     {
         if (title.empty() ||title.size() > Protocol::MAX_ROOM_TITLE_BYTES)
