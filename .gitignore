@@ -1,0 +1,29 @@
+# Visual Studio workspace caches and per-user settings
+.vs/
+*.vcxproj.user
+*.suo
+
+# C++ build output directories (at any project depth)
+x64/
+x86/
+[Dd]ebug/
+[Rr]elease/
+
+# Compiled objects, libraries, executables, and debug symbols
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.idb
+*.ilk
+*.ipch
+*.iobj
+*.ipdb
+
+# MSBuild intermediate files
+*.tlog/
+*.lastbuildstate
+*.recipe
+*.vcxproj.FileListAbsolute.txt
