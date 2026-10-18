@@ -28,6 +28,8 @@ bool ProcessChatNotification(const NChatClient::ClientPacket& packet);
 bool ProcessResponse(const ClientPacket& packet,ClientGameView& game);
 void CheckPacketCodec();
 const char* RoomResultText(Protocol::RoomResult result);
+const char* MoveResultText(Protocol::GameMoveResult result);
+const char* GameEndReasonText(Protocol::GameEndReason reason);
 
 
 bool SendEncodedBody(NChatClient::TcpClient& client,UINT16 packetId,const Protocol::PacketBody& body)
@@ -91,6 +93,8 @@ bool ProcessCommand(TcpClient& client, const std::string& command, ClientGameVie
 		std::cout << "ready on\n";
 		std::cout << "ready off\n";
 		std::cout << "start\n";
+		std::cout << "move <x:0-14> <y:0-14>\n";
+		std::cout << "board\n";
 		std::cout << "resign\n";
 
 		return true;
@@ -1013,7 +1017,19 @@ int main()
 
 	TcpClient client;
 
-	if (!client.Connect("127.0.0.1", 32452))
+	std::string serverIp;
+	std::cout << "Server IPv4 (Enter = 127.0.0.1): ";
+	if (!std::getline(std::cin, serverIp))
+	{
+		return 1;
+	}
+
+	if (serverIp.empty())
+	{
+		serverIp = "127.0.0.1";
+	}
+
+	if (!client.Connect(serverIp.c_str(), 32452))
 	{
 		std::cerr << "Connection failed.\n";
 		std::cout << "Press Enter to exit.\n";
@@ -1026,7 +1042,7 @@ int main()
 	std::cout << "Commands: login <nickname>, echo <message>, quit\n";
 	std::cout << "> ";
 
-	bool running;
+	bool running = true;
 	std::string input;
 
 

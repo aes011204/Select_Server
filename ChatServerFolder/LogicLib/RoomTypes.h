@@ -21,7 +21,7 @@ namespace NLogicLib
         size_t MaxRooms = 100;
         size_t Capacity = 2;
 
-        std::chrono::seconds TurnTime{ 30 };
+        std::chrono::seconds TurnTime{ 300 }; // Per-turn limit: 5 minutes
     };
 
 

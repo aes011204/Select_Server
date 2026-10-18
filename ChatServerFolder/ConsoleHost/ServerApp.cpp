@@ -40,7 +40,7 @@ bool NServer::ServerApp::Init(const ServerConfig& config)
 
 	m_initialized = true;
 
-	std::cout<< "Listening on 127.0.0.1:"<< m_config.Network.Port<< '\n';
+	std::cout<< "Listening on 0.0.0.0:"<< m_config.Network.Port<< '\n';
 
 	return true;
 

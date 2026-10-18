@@ -71,7 +71,7 @@ namespace NLogicLib
 		NServerNetLib::SessionId m_blackPlayer = 0;
 		NServerNetLib::SessionId m_whitePlayer = 0;
 
-		std::chrono::seconds m_turnTime{ 30 };
+		std::chrono::seconds m_turnTime{ 300 };
 		GameClock::time_point m_turnDeadline{};
 
 		Protocol::GameId m_gameId = 0;
