@@ -81,7 +81,7 @@ namespace NServerNetLib
         sockaddr_in serverAddress{};
         serverAddress.sin_family = AF_INET; //IPv4 주소 사용
         serverAddress.sin_port = htons(m_config.Port); // 16비트 값: 포트 번호
-        serverAddress.sin_addr.s_addr = htonl(INADDR_LOOPBACK); //32비트 값: 여기서는 IPv4 주소(INADDR_LOOPBACK = 127.0.0.1 = 나 자신)
+        serverAddress.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all local IPv4 interfaces.
 
         //4. 소켓에 주소와 포트 연결 
         const int bindResult = bind(m_listenSocket, reinterpret_cast<const sockaddr*>(&serverAddress), sizeof(serverAddress));
