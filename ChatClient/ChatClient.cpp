@@ -2,7 +2,9 @@
 //
 
 #include "TcpClient.h"
-#include <conio.h>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <iostream>
 #include <iostream>
 #include <string>
@@ -1009,9 +1011,157 @@ const char* GameEndReasonText(Protocol::GameEndReason reason)
 	return "Unknown reason";
 }
 
+namespace
+{
+	void ReduceConsoleWidth()
+	{
+		const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+		CONSOLE_SCREEN_BUFFER_INFO info{};
+		if (!GetConsoleScreenBufferInfo(output, &info))
+			return;
+
+		const SHORT currentWidth = info.srWindow.Right - info.srWindow.Left + 1;
+		const SHORT height = info.srWindow.Bottom - info.srWindow.Top + 1;
+		const SHORT width = static_cast<SHORT>(currentWidth * 2 / 3);
+		if (width < 1)
+			return;
+
+		// A pseudoconsole has no visible console HWND. Its terminal owns the window.
+		const HWND window = GetConsoleWindow();
+		if (window == nullptr || !IsWindowVisible(window))
+		{
+			DWORD mode = 0;
+			if (GetConsoleMode(output, &mode) &&
+				SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+			{
+				// XTWINOPS: preserve rows and request a narrower terminal window.
+				std::cout << "\x1b[8;" << height << ';' << width << 't' << std::flush;
+				SetConsoleMode(output, mode);
+			}
+			return;
+		}
+
+		// The classic console host uses the screen-buffer APIs instead.
+		if (IsZoomed(window))
+			ShowWindow(window, SW_RESTORE);
+		SMALL_RECT rectangle = { 0, info.srWindow.Top,
+			static_cast<SHORT>(width - 1), info.srWindow.Bottom };
+		if (SetConsoleWindowInfo(output, TRUE, &rectangle))
+		{
+			COORD buffer = info.dwSize;
+			buffer.X = width;
+			SetConsoleScreenBufferSize(output, buffer);
+		}
+	}
+
+	std::string ToUtf8(const std::wstring& text)
+	{
+		if (text.empty())
+			return {};
+
+		const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+			text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+		if (size == 0)
+			throw std::runtime_error("Invalid Unicode input.");
+
+		std::string result(size, '\0');
+		if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+			text.data(), static_cast<int>(text.size()), &result[0], size,
+			nullptr, nullptr) == 0)
+			throw std::runtime_error("Could not encode input as UTF-8.");
+		return result;
+	}
+
+	class ConsoleLineInput
+	{
+	public:
+		ConsoleLineInput()
+		{
+			m_input = GetStdHandle(STD_INPUT_HANDLE);
+			if (!GetConsoleMode(m_input, &m_originalMode) ||
+				!SetConsoleMode(m_input, m_originalMode |
+					ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+				throw std::runtime_error("Could not initialize console line input.");
+
+			try
+			{
+				m_reader = std::thread([this] { ReadLines(); });
+			}
+			catch (...)
+			{
+				SetConsoleMode(m_input, m_originalMode);
+				throw;
+			}
+		}
+
+		~ConsoleLineInput()
+		{
+			m_stopping = true;
+			// Retry cancellation to cover shutdown immediately before ReadConsoleW.
+			while (WaitForSingleObject(m_reader.native_handle(), 10) == WAIT_TIMEOUT)
+				CancelSynchronousIo(m_reader.native_handle());
+			m_reader.join();
+			SetConsoleMode(m_input, m_originalMode);
+		}
+
+		bool TryPop(std::wstring& line)
+		{
+			std::lock_guard<std::mutex> lock(m_mutex);
+			if (m_lines.empty())
+				return false;
+			line = std::move(m_lines.front());
+			m_lines.pop_front();
+			return true;
+		}
+
+		bool Finished() const { return m_finished; }
+
+	private:
+		void ReadLines()
+		{
+			// Cooked Unicode input lets Windows own IME composition, echo and deletion.
+			// Only this worker reads input; the main thread keeps servicing the network.
+			std::wstring line;
+			while (!m_stopping)
+			{
+				wchar_t buffer[256];
+				DWORD count = 0;
+				if (!ReadConsoleW(m_input, buffer, 256, &count, nullptr) || count == 0)
+					break;
+				for (DWORD i = 0; i < count; ++i)
+				{
+					if (buffer[i] == L'\n')
+					{
+						if (!line.empty() && line.back() == L'\r')
+							line.pop_back();
+						std::lock_guard<std::mutex> lock(m_mutex);
+						m_lines.push_back(std::move(line));
+						line.clear();
+					}
+					else
+						line.push_back(buffer[i]);
+				}
+			}
+			m_finished = true;
+		}
+
+		HANDLE m_input = INVALID_HANDLE_VALUE;
+		DWORD m_originalMode = 0;
+		std::mutex m_mutex;
+		std::deque<std::wstring> m_lines;
+		std::atomic<bool> m_stopping{false};
+		std::atomic<bool> m_finished{false};
+		std::thread m_reader;
+	};
+}
+
 int main()
 {
+	SetConsoleOutputCP(CP_UTF8);
+	ReduceConsoleWidth();
+
 	CheckPacketCodec();
+	std::cout << "[Input] Windows Unicode line input (IME).\n";
 
 	ClientGameView game;
 
@@ -1040,57 +1190,33 @@ int main()
 
 	std::cout << "Connected to server.\n";
 	std::cout << "Commands: login <nickname>, echo <message>, quit\n";
-	std::cout << "> ";
+	std::cout << "> " << std::flush;
 
 	bool running = true;
-	std::string input;
-
+	std::wstring input;
+	ConsoleLineInput consoleInput;
 
 	while (running)
 	{
-		while (_kbhit())
+		while (consoleInput.TryPop(input))
 		{
-			const int key = _getch();
-			// 방향키·기능키의 확장 입력은 무시
-			if (key == 0 || key == 224)
+			try
 			{
-				_getch();
-				continue;
+				running = ProcessCommand(client, ToUtf8(input), game);
 			}
-
-			if (key == '\r')
+			catch (const std::runtime_error& error)
 			{
-				std::cout << '\n';
-
-				running = ProcessCommand(client, input, game);
-				input.clear();
-
-				if (!running)
-				{
-					break;
-				}
-
-				std::cout << "> ";
+				std::cerr << error.what() << '\n';
 			}
-			else if (key == '\b')
+			input.clear();
+			if (!running)
 			{
-				if (!input.empty())
-				{
-					input.pop_back();
-					std::cout << "\b \b";
-				}
+				break;
 			}
-			else if (key >= 32 && key <= 126)
-			{
-				if (input.size() < 1024)
-				{
-					input.push_back(static_cast<char>(key));
-					std::cout << static_cast<char>(key);
-				}
-			}
+			std::cout << "> " << std::flush;
 		}
 
-		if (!running)
+		if (!running || consoleInput.Finished())
 		{
 			break;
 		}
